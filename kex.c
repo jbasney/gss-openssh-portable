@@ -53,6 +53,10 @@
 #include "roaming.h"
 #include "digest.h"
 
+#ifdef GSSAPI
+#include "ssh-gss.h"
+#endif
+
 #if OPENSSL_VERSION_NUMBER >= 0x00907000L
 # if defined(HAVE_EVP_SHA256)
 # define evp_ssh_sha256 EVP_sha256
@@ -94,6 +98,11 @@ static const struct kexalg kexalgs[] = {
 #ifdef HAVE_EVP_SHA256
 	{ KEX_CURVE25519_SHA256, KEX_C25519_SHA256, 0, SSH_DIGEST_SHA256 },
 #endif /* HAVE_EVP_SHA256 */
+#ifdef GSSAPI
+	{ KEX_GSS_GEX_SHA1_ID, KEX_GSS_GEX_SHA1, 0, SSH_DIGEST_SHA1 },
+	{ KEX_GSS_GRP1_SHA1_ID, KEX_GSS_GRP1_SHA1, 0, SSH_DIGEST_SHA1 },
+	{ KEX_GSS_GRP14_SHA1_ID, KEX_GSS_GRP14_SHA1, 0, SSH_DIGEST_SHA1 },
+#endif /* GSSAPI */
 	{ NULL, -1, -1, -1},
 };
 
