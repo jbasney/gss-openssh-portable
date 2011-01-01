@@ -76,6 +76,7 @@ typedef struct {
 	char *filename;
 	char *envvar;
 	char *envval;
+	struct passwd *owner;
 	void *data;
 } ssh_gssapi_ccache;
 
@@ -83,8 +84,11 @@ typedef struct {
 	gss_buffer_desc displayname;
 	gss_buffer_desc exportedname;
 	gss_cred_id_t creds;
+	gss_name_t name;
 	struct ssh_gssapi_mech_struct *mech;
 	ssh_gssapi_ccache store;
+	int used;
+	int updated;
 } ssh_gssapi_client;
 
 typedef struct ssh_gssapi_mech_struct {
@@ -95,6 +99,7 @@ typedef struct ssh_gssapi_mech_struct {
 	int (*userok) (ssh_gssapi_client *, char *);
 	int (*localname) (ssh_gssapi_client *, char **);
 	void (*storecreds) (ssh_gssapi_client *);
+	int (*updatecreds) (ssh_gssapi_ccache *, ssh_gssapi_client *);
 } ssh_gssapi_mech;
 
 typedef struct {
@@ -133,6 +138,7 @@ OM_uint32 ssh_gssapi_sign(Gssctxt *, gss_buffer_t, gss_buffer_t);
 void ssh_gssapi_buildmic(Buffer *, const char *, const char *, const char *);
 int ssh_gssapi_check_mechanism(Gssctxt **, gss_OID, const char *, const char *);
 OM_uint32 ssh_gssapi_client_identity(Gssctxt *, const char *);
+int ssh_gssapi_credentials_updated(Gssctxt *);
 
 /* In the server */
 typedef int ssh_gssapi_check_fn(Gssctxt **, gss_OID, const char *,
@@ -144,14 +150,18 @@ gss_OID ssh_gssapi_id_kex(Gssctxt *, char *, int);
 int ssh_gssapi_server_check_mech(Gssctxt **,gss_OID, const char *,
     const char *);
 OM_uint32 ssh_gssapi_server_ctx(Gssctxt **, gss_OID);
-int ssh_gssapi_userok(char *name);
+int ssh_gssapi_userok(char *name, struct passwd *);
 OM_uint32 ssh_gssapi_checkmic(Gssctxt *, gss_buffer_t, gss_buffer_t);
 void ssh_gssapi_do_child(char ***, u_int *);
 void ssh_gssapi_cleanup_creds(void);
 void ssh_gssapi_storecreds(void);
 
 char *ssh_gssapi_server_mechanisms(void);
-int ssh_gssapi_oid_table_ok();
+int ssh_gssapi_oid_table_ok(void);
+
+int ssh_gssapi_update_creds(ssh_gssapi_ccache *store);
+void ssh_gssapi_rekey_creds(void);
+
 #endif /* GSSAPI */
 
 #endif /* _SSH_GSS_H */

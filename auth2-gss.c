@@ -78,7 +78,8 @@ userauth_gsskeyex(Authctxt *authctxt)
 	/* gss_kex_context is NULL with privsep, so we can't check it here */
 	if (!GSS_ERROR(PRIVSEP(ssh_gssapi_checkmic(gss_kex_context,
 	    &gssbuf, &mic))))
-		authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user));
+		authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user,
+		    authctxt->pw));
 
 	buffer_free(&b);
 	free(mic.value);
@@ -269,7 +270,8 @@ input_gssapi_exchange_complete(int type, u_int32_t plen, void *ctxt)
 
 	packet_check_eom();
 
-	authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user));
+	authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user,
+	    authctxt->pw));
 
 	authctxt->postponed = 0;
 	dispatch_set(SSH2_MSG_USERAUTH_GSSAPI_TOKEN, NULL);
@@ -305,7 +307,7 @@ input_gssapi_mic(int type, u_int32_t plen, void *ctxt)
 
 	if (!GSS_ERROR(PRIVSEP(ssh_gssapi_checkmic(gssctxt, &gssbuf, &mic))))
 		authenticated =
-		    PRIVSEP(ssh_gssapi_userok(authctxt->user));
+		    PRIVSEP(ssh_gssapi_userok(authctxt->user, authctxt->pw));
 	else
 		logit("GSSAPI MIC check failed");
 

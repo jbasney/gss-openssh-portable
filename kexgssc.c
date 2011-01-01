@@ -317,6 +317,9 @@ kexgss_client(Kex *kex)
 		memcpy(kex->session_id, hash, kex->session_id_len);
 	}
 
+	if (kex->gss_deleg_creds)
+		ssh_gssapi_credentials_updated(ctxt);
+
 	if (gss_kex_context == NULL)
 		gss_kex_context = ctxt;
 	else
