@@ -112,6 +112,7 @@ initialize_server_options(ServerOptions *options)
 	options->gss_keyex = -1;
 	options->gss_cleanup_creds = -1;
 	options->gss_strict_acceptor = -1;
+	options->gss_store_rekey = -1;
 	options->password_authentication = -1;
 	options->kbd_interactive_authentication = -1;
 	options->challenge_response_authentication = -1;
@@ -258,6 +259,8 @@ fill_default_server_options(ServerOptions *options)
 		options->gss_cleanup_creds = 1;
 	if (options->gss_strict_acceptor == -1)
 		options->gss_strict_acceptor = 1;
+	if (options->gss_store_rekey == -1)
+		options->gss_store_rekey = 0;
 	if (options->password_authentication == -1)
 		options->password_authentication = 1;
 	if (options->kbd_interactive_authentication == -1)
@@ -359,7 +362,7 @@ typedef enum {
 	sHostbasedUsesNameFromPacketOnly, sClientAliveInterval,
 	sClientAliveCountMax, sAuthorizedKeysFile,
 	sGssAuthentication, sGssCleanupCreds, sGssStrictAcceptor,
-	sGssKeyEx,
+	sGssKeyEx, sGssStoreRekey,
 	sAcceptEnv, sPermitTunnel,
 	sMatch, sPermitOpen, sForceCommand, sChrootDirectory,
 	sUsePrivilegeSeparation, sAllowAgentForwarding,
@@ -432,12 +435,14 @@ static struct {
 	{ "gssapicleanupcreds", sGssCleanupCreds, SSHCFG_GLOBAL },
 	{ "gssapistrictacceptorcheck", sGssStrictAcceptor, SSHCFG_GLOBAL },
 	{ "gssapikeyexchange", sGssKeyEx, SSHCFG_GLOBAL },
+	{ "gssapistorecredentialsonrekey", sGssStoreRekey, SSHCFG_GLOBAL },
 #else
 	{ "gssapiauthentication", sUnsupported, SSHCFG_ALL },
 	{ "gssapicleanupcredentials", sUnsupported, SSHCFG_GLOBAL },
 	{ "gssapicleanupcreds", sUnsupported, SSHCFG_GLOBAL },
 	{ "gssapistrictacceptorcheck", sUnsupported, SSHCFG_GLOBAL },
 	{ "gssapikeyexchange", sUnsupported, SSHCFG_GLOBAL },
+	{ "gssapistorecredentialsonrekey", sUnsupported, SSHCFG_GLOBAL },
 #endif
 	{ "gssusesessionccache", sUnsupported, SSHCFG_GLOBAL },
 	{ "gssapiusesessioncredcache", sUnsupported, SSHCFG_GLOBAL },
@@ -1130,6 +1135,10 @@ process_server_config_line(ServerOptions *options, char *line,
 
 	case sGssStrictAcceptor:
 		intptr = &options->gss_strict_acceptor;
+		goto parse_flag;
+
+	case sGssStoreRekey:
+		intptr = &options->gss_store_rekey;
 		goto parse_flag;
 
 	case sPasswordAuthentication:
