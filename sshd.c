@@ -1755,6 +1755,8 @@ main(int ac, char **av)
 		logit("Disabling protocol version 2. Could not load host key");
 		options.protocol &= ~SSH_PROTO_2;
 	}
+#else
+	ssh_log_gssapi_errors(1);
 #endif
 	if (!(options.protocol & (SSH_PROTO_1|SSH_PROTO_2))) {
 		logit("sshd: no hostkeys available -- exiting.");

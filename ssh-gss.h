@@ -131,6 +131,7 @@ OM_uint32 ssh_gssapi_accept_ctx(Gssctxt *,
     gss_buffer_desc *, gss_buffer_desc *, OM_uint32 *);
 OM_uint32 ssh_gssapi_getclient(Gssctxt *, ssh_gssapi_client *);
 void ssh_gssapi_error(Gssctxt *);
+void ssh_log_gssapi_errors(int);
 char *ssh_gssapi_last_error(Gssctxt *, OM_uint32 *, OM_uint32 *);
 void ssh_gssapi_build_ctx(Gssctxt **);
 void ssh_gssapi_delete_ctx(Gssctxt **);

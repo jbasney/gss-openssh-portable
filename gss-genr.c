@@ -63,6 +63,14 @@ Gssctxt *gss_kex_context = NULL;
 
 static ssh_gss_kex_mapping *gss_enc2oid = NULL;
 
+static int log_gssapi_errors = 0;
+
+void
+ssh_log_gssapi_errors(int on)
+{
+	log_gssapi_errors = on;
+}
+
 int
 ssh_gssapi_oid_table_ok(void)
 {
@@ -239,7 +247,10 @@ ssh_gssapi_error(Gssctxt *ctxt)
 	char *s;
 
 	s = ssh_gssapi_last_error(ctxt, NULL, NULL);
-	debug("%s", s);
+	if (log_gssapi_errors)
+		logit("%s", s);
+	else
+		debug("%s", s);
 	free(s);
 }
 
@@ -266,8 +277,9 @@ ssh_gssapi_last_error(Gssctxt *ctxt, OM_uint32 *major_status,
 		gss_display_status(&lmin, ctxt->major,
 		    GSS_C_GSS_CODE, ctxt->oid, &ctx, &msg);
 
+		if (buffer_len(&b) > 0)
+			buffer_append(&b, ": ", 2);
 		buffer_append(&b, msg.value, msg.length);
-		buffer_put_char(&b, '\n');
 
 		gss_release_buffer(&lmin, &msg);
 	} while (ctx != 0);
@@ -277,8 +289,9 @@ ssh_gssapi_last_error(Gssctxt *ctxt, OM_uint32 *major_status,
 		gss_display_status(&lmin, ctxt->minor,
 		    GSS_C_MECH_CODE, ctxt->oid, &ctx, &msg);
 
+		if (buffer_len(&b) > 0)
+			buffer_append(&b, ": ", 2);
 		buffer_append(&b, msg.value, msg.length);
-		buffer_put_char(&b, '\n');
 
 		gss_release_buffer(&lmin, &msg);
 	} while (ctx != 0);
