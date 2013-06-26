@@ -495,54 +495,132 @@ int
 ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 {
 	static gss_name_t saved_name = GSS_C_NO_NAME;
-	static OM_uint32 saved_lifetime = 0;
-	static gss_OID saved_mech = GSS_C_NO_OID;
-	static gss_name_t name;
-	static OM_uint32 last_call = 0;
-	OM_uint32 lifetime, now, major, minor;
-	int equal;
-
-	now = time(NULL);
+	static gss_OID saved_mech = 0;
+	static time_t last_call = 0;
+	static time_t saved_tkt_expiration = 0;
+	static time_t saved_tgt_expiration = 0;
+	gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+	OM_uint32 lifetime;
+	OM_uint32 major, minor;
+	time_t now = time(NULL);
+	gss_OID_set_desc mechs;
 
 	if (ctxt) {
+
 		debug("Rekey has happened - updating saved versions");
 
-		if (saved_name != GSS_C_NO_NAME)
-			gss_release_name(&minor, &saved_name);
+		last_call = now;
 
-		major = gss_inquire_cred(&minor, GSS_C_NO_CREDENTIAL,
-		    &saved_name, &saved_lifetime, NULL, NULL);
+		/*
+		 * If we can't figure out when our current credentials expire,
+		 * rekey once we have credentials that we *can* determine to
+		 * expire more than an hour from now.
+		 */
+		saved_tkt_expiration = saved_tgt_expiration = now + 3600;
+		(void) gss_release_name(&minor, &saved_name);
+		saved_mech = GSS_C_NO_OID;
 
-		if (!GSS_ERROR(major)) {
-			saved_mech = ctxt->oid;
-		        saved_lifetime+= now;
-		} else {
-			/* Handle the error */
-		}
+		/*
+		 * Even if our TGT is not newer than before, if our service
+		 * ticket expiration changes to a later time, we rekey.  We
+		 * hope that delegated credentials don't expire sooner than
+		 * the either service ticket or the original TGT, but there's
+		 * no way to know.  This works in practice.
+		 *
+		 * Note that we leave the saved names and mech unchanged on
+		 * error, so if we succeed once, we're never left blind.
+		 */
+		major = gss_inquire_context(&minor, ctxt->context, &saved_name,
+		    NULL, &lifetime, &saved_mech, NULL, NULL, NULL);
+		if (GSS_ERROR(major))
+			return 0;
+		if (lifetime != GSS_C_INDEFINITE)
+			saved_tkt_expiration = now + lifetime;
+
+		/*
+		 * Save expiration of corresponding client credential. We rekey
+		 * and delegate a new credential as soon as a credential with a
+		 * later expiration time is obtained.
+		 *
+		 * Note, gss_acquire_cred need not and often does not return a
+		 * usable lifetime, because the processing necessary for that is
+		 * "deferred".  So we don't even ask.  Instead we immediately
+		 * call gss_inquire_cred_by_mech(), which does any "deferred"
+		 * work and returns the relevant lifetime.
+		 */
+		mechs.count = 1;
+		mechs.elements = saved_mech;
+		major = gss_acquire_cred(&minor, saved_name, GSS_C_INDEFINITE,
+		    &mechs, GSS_C_INITIATE, &cred, NULL, NULL);
+		if (GSS_ERROR(major))
+			return 0;
+		major = gss_inquire_cred_by_mech(&minor, cred, saved_mech,
+		    NULL, &lifetime, NULL, NULL);
+		gss_release_cred(&minor, &cred);
+		if (lifetime != GSS_C_INDEFINITE)
+			saved_tgt_expiration = now + lifetime;
+
 		return 0;
 	}
 
-	if (now - last_call < 10)
-		return 0;
+#define LIFETIME_QUANTUM 10
 
+	if (now - last_call < LIFETIME_QUANTUM)
+		return 0;
 	last_call = now;
 
-	if (saved_mech == GSS_C_NO_OID)
-		return 0;
-
-	major = gss_inquire_cred(&minor, GSS_C_NO_CREDENTIAL,
-	    &name, &lifetime, NULL, NULL);
-	if (major == GSS_S_CREDENTIALS_EXPIRED)
-		return 0;
-	else if (GSS_ERROR(major))
-		return 0;
-
-	major = gss_compare_name(&minor, saved_name, name, &equal);
-	gss_release_name(&minor, &name);
+	/*
+	 * We don't want to bother *if* our current cred's lifetime is no use.
+	 *
+	 * If we failed to save the mech (and name) before, just go with
+	 * defaults until we do.
+	 */
+	if (saved_mech != GSS_C_NO_OID && saved_name != GSS_C_NO_NAME) {
+	    mechs.count = 1;
+	    mechs.elements = saved_mech;
+	    major = gss_acquire_cred(&minor, saved_name, GSS_C_INDEFINITE,
+		&mechs, GSS_C_INITIATE, &cred, NULL, NULL);
+	    if (GSS_ERROR(major))
+		    return 0;
+	    major = gss_inquire_cred_by_mech(&minor, cred, saved_mech, NULL,
+		&lifetime, NULL, NULL);
+	} else {
+	    major = gss_acquire_cred(&minor, GSS_C_NO_NAME, GSS_C_INDEFINITE,
+		GSS_C_NO_OID_SET, GSS_C_INITIATE, &cred, NULL, NULL);
+	    if (GSS_ERROR(major))
+		    return 0;
+	    /*
+	     * XXX: With gss_inquire_cred(), some Heimdal versions return
+	     * success and a lifetime of 0 for expired credentials, but that's
+	     * just fine, we don't use anything with a lifetime shorter than
+	     * LIFETIME_QUANTUM.  Note, this is not an issue with
+	     * gss_inquire_cred_by_mech().
+	     */
+	    major = gss_inquire_cred(&minor, GSS_C_NO_CREDENTIAL,
+		NULL, &lifetime, NULL, NULL);
+	}
+	gss_release_cred(&minor, &cred);
 	if (GSS_ERROR(major))
 		return 0;
 
-	if (equal && (saved_lifetime < lifetime + now - 10))
+	/*
+	 * No point delegating again if we'd have to do it again within
+	 * LIFETIME_QUANTUM!
+	 */
+	if (lifetime < LIFETIME_QUANTUM)
+		return 0;
+
+	/* Redelegate any updated TGT. */
+	if (saved_tgt_expiration &&
+	    now + lifetime > saved_tgt_expiration + LIFETIME_QUANTUM)
+		return 1;
+
+	/*
+	 * If we're near (within LIFETIME_QUANTUM) of the service ticket
+	 * expiration time, rekey.
+	 */
+	if (saved_tkt_expiration &&
+	    now > saved_tkt_expiration - LIFETIME_QUANTUM)
 		return 1;
 
 	return 0;
