@@ -802,6 +802,12 @@ The character sequence
 will be replaced by a single
 .Ql %
 character, which may be used when specifying IPv6 link-local addresses.
+The character sequence
+.Ql %L
+will be substituted by the first component of the local host name,
+The character sequence
+.Ql %l
+will be substituted by the local host name (including any domain name),
 .Pp
 The default is the name given on the command line.
 Numeric IP addresses are also permitted (both on the command line and in
@@ -1053,6 +1059,13 @@ The argument to this keyword must be
 or
 .Dq no .
 The default is to check the host key for localhost.
+.It Cm ReplaceLocalhost
+If set to
+.Dq yes
+then the hostname given on the command-line will be replaced with the
+local host's hostname when the given hostname resolves to loopback
+addresses.  Defaults to
+.Dq no .
 .It Cm NumberOfPasswordPrompts
 Specifies the number of password prompts before giving up.
 The argument to this keyword must be an integer.

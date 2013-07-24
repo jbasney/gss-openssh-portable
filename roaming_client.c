@@ -255,7 +255,7 @@ wait_for_roaming_reconnect(void)
 			continue;
 
 		if (ssh_connect(host, NULL, &hostaddr, options.port,
-		    options.address_family, 1, &timeout_ms,
+		    options.address_family, 1, &timeout_ms, NULL,
 		    options.tcp_keep_alive, options.use_privileged_port) == 0 &&
 		    roaming_resume() == 0) {
 			packet_restore_state();

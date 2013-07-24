@@ -420,7 +420,7 @@ main(int ac, char **av)
 	char cname[NI_MAXHOST];
 	struct stat st;
 	struct passwd *pw;
-	int timeout_ms;
+	int timeout_ms, is_localhost;
 	extern int optind, optreset;
 	extern char *optarg;
 	struct Forward fwd;
@@ -904,11 +904,17 @@ main(int ac, char **av)
 	/* Hostname canonicalisation needs a few options filled. */
 	fill_default_options_for_canonicalization(&options);
 
+	if (gethostname(thishost, sizeof(thishost)) == -1)
+		fatal("gethostname: %s", strerror(errno));
+	strlcpy(shorthost, thishost, sizeof(shorthost));
+	shorthost[strcspn(thishost, ".")] = '\0';
+	snprintf(portstr, sizeof(portstr), "%d", options.port);
+
 	/* If the user has replaced the hostname then take it into use now */
 	if (options.hostname != NULL) {
 		/* NB. Please keep in sync with readconf.c:match_cfg_line() */
 		cp = percent_expand(options.hostname,
-		    "h", host, (char *)NULL);
+		    "h", host, "l", thishost, "L", shorthost, (char *)NULL);
 		free(host);
 		host = cp;
 	}
@@ -1000,12 +1006,6 @@ main(int ac, char **av)
 	if (options.user == NULL)
 		options.user = xstrdup(pw->pw_name);
 
-	if (gethostname(thishost, sizeof(thishost)) == -1)
-		fatal("gethostname: %s", strerror(errno));
-	strlcpy(shorthost, thishost, sizeof(shorthost));
-	shorthost[strcspn(thishost, ".")] = '\0';
-	snprintf(portstr, sizeof(portstr), "%d", options.port);
-
 	if ((md = ssh_digest_start(SSH_DIGEST_SHA1)) == NULL ||
 	    ssh_digest_update(md, thishost, strlen(thishost)) < 0 ||
 	    ssh_digest_update(md, host, strlen(host)) < 0 ||
@@ -1072,15 +1072,23 @@ main(int ac, char **av)
 	/* Open a connection to the remote host. */
 	if (ssh_connect(host, addrs, &hostaddr, options.port,
 	    options.address_family, options.connection_attempts,
-	    &timeout_ms, options.tcp_keep_alive,
+	    &timeout_ms, &is_localhost, options.tcp_keep_alive,
 	    options.use_privileged_port) != 0)
- 		exit(255);
+		exit(255);
 
 	if (addrs != NULL)
 		freeaddrinfo(addrs);
 
 	packet_set_timeout(options.server_alive_interval,
 	    options.server_alive_count_max);
+
+	if (options.replace_localhost && is_localhost) {
+		debug3("Using local host's hostname (%s) instead of %s",
+		    thishost, host);
+		/* "localhost" is an alias for every host */
+		free(host);
+		host = xstrdup(thishost);
+	}
 
 	if (timeout_ms > 0)
 		debug3("timeout: %d ms remain after connect", timeout_ms);

@@ -113,6 +113,7 @@ typedef struct {
 	int64_t rekey_limit;
 	int	rekey_interval;
 	int	no_host_authentication_for_localhost;
+	int	replace_localhost;
 	int	identities_only;
 	int	server_alive_interval;
 	int	server_alive_count_max;

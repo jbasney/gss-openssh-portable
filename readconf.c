@@ -140,6 +140,7 @@ typedef enum {
 	oDynamicForward, oPreferredAuthentications, oHostbasedAuthentication,
 	oHostKeyAlgorithms, oBindAddress, oPKCS11Provider,
 	oClearAllForwardings, oNoHostAuthenticationForLocalhost,
+	oReplaceLocalhost,
 	oEnableSSHKeysign, oRekeyLimit, oVerifyHostKeyDNS, oConnectTimeout,
 	oAddressFamily, oGssAuthentication, oGssDelegateCreds,
 	oGssTrustDns, oGssKeyEx, oGssClientIdentity, oGssRenewalRekey,
@@ -249,6 +250,7 @@ static struct {
 	{ "enablesshkeysign", oEnableSSHKeysign },
 	{ "verifyhostkeydns", oVerifyHostKeyDNS },
 	{ "nohostauthenticationforlocalhost", oNoHostAuthenticationForLocalhost },
+	{ "replacelocalhost", oReplaceLocalhost },
 	{ "rekeylimit", oRekeyLimit },
 	{ "connecttimeout", oConnectTimeout },
 	{ "addressfamily", oAddressFamily },
@@ -493,7 +495,18 @@ match_cfg_line(Options *options, char **condition, struct passwd *pw,
 	const char *ruser;
 	int r, port, result = 1, attributes = 0;
 	size_t len;
-	char thishost[NI_MAXHOST], shorthost[NI_MAXHOST], portstr[NI_MAXSERV];
+	static int once = 0;
+	static char thishost[NI_MAXHOST];
+	static char shorthost[NI_MAXHOST];
+	static char portstr[NI_MAXSERV];
+
+	if (! once) {
+		if (gethostname(thishost, sizeof(thishost)) == -1)
+			fatal("gethostname: %s", strerror(errno));
+		strlcpy(shorthost, thishost, sizeof(shorthost));
+		shorthost[strcspn(thishost, ".")] = '\0';
+		once = 1;
+	}
 
 	/*
 	 * Configuration is likely to be incomplete at this point so we
@@ -504,7 +517,7 @@ match_cfg_line(Options *options, char **condition, struct passwd *pw,
 	if (options->hostname != NULL) {
 		/* NB. Please keep in sync with ssh.c:main() */
 		host = percent_expand(options->hostname,
-		    "h", host_arg, (char *)NULL);
+		    "h", host_arg, "l", thishost, "L", shorthost, (char *)NULL);
 	} else
 		host = xstrdup(host_arg);
 
@@ -556,10 +569,6 @@ match_cfg_line(Options *options, char **condition, struct passwd *pw,
 				    "'LocalUser %.100s' ",
 				    filename, linenum, pw->pw_name);
 		} else if (strcasecmp(attrib, "exec") == 0) {
-			if (gethostname(thishost, sizeof(thishost)) == -1)
-				fatal("gethostname: %s", strerror(errno));
-			strlcpy(shorthost, thishost, sizeof(shorthost));
-			shorthost[strcspn(thishost, ".")] = '\0';
 			snprintf(portstr, sizeof(portstr), "%d", port);
 
 			cmd = percent_expand(arg,
@@ -928,6 +937,10 @@ parse_time:
 
 	case oNoHostAuthenticationForLocalhost:
 		intptr = &options->no_host_authentication_for_localhost;
+		goto parse_flag;
+
+	case oReplaceLocalhost:
+		intptr = &options->replace_localhost;
 		goto parse_flag;
 
 	case oNumberOfPasswordPrompts:
@@ -1616,6 +1629,7 @@ initialize_options(Options * options)
 	options->pkcs11_provider = NULL;
 	options->enable_ssh_keysign = - 1;
 	options->no_host_authentication_for_localhost = - 1;
+	options->replace_localhost = -1;
 	options->identities_only = - 1;
 	options->rekey_limit = - 1;
 	options->rekey_interval = -1;
@@ -1780,6 +1794,8 @@ fill_default_options(Options * options)
 		clear_forwardings(options);
 	if (options->no_host_authentication_for_localhost == - 1)
 		options->no_host_authentication_for_localhost = 0;
+	if (options->replace_localhost == - 1)
+		options->replace_localhost = 0;
 	if (options->identities_only == -1)
 		options->identities_only = 0;
 	if (options->enable_ssh_keysign == -1)

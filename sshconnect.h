@@ -33,7 +33,7 @@ struct Sensitive {
 
 struct addrinfo;
 int	 ssh_connect(const char *, struct addrinfo *, struct sockaddr_storage *,
-    u_short, int, int, int *, int, int);
+    u_short, int, int, int *, int *, int, int);
 void	 ssh_kill_proxy_command(void);
 
 void	 ssh_login(Sensitive *, const char *, struct sockaddr *, u_short,
