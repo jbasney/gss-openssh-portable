@@ -68,9 +68,9 @@
 #define SSH2_MSG_KEXGSS_ERROR                           34
 #define SSH2_MSG_KEXGSS_GROUPREQ			40
 #define SSH2_MSG_KEXGSS_GROUP				41
-#define KEX_GSS_GRP1_SHA1_ID	"gss-group1-sha1-toWM5Slw5Ew8Mqkay+al2g=="
-#define KEX_GSS_GRP14_SHA1_ID	"gss-group14-sha1-toWM5Slw5Ew8Mqkay+al2g=="
-#define KEX_GSS_GEX_SHA1_ID	"gss-gex-sha1-toWM5Slw5Ew8Mqkay+al2g=="
+#define KEX_GSS_GRP1_SHA1_ID				"gss-group1-sha1-"
+#define KEX_GSS_GRP14_SHA1_ID				"gss-group14-sha1-"
+#define KEX_GSS_GEX_SHA1_ID				"gss-gex-sha1-"
 
 typedef struct {
 	char *filename;

@@ -130,7 +130,10 @@ kex_alg_by_name(const char *name)
 	const struct kexalg *k;
 
 	for (k = kexalgs; k->name != NULL; k++) {
-		if (strcmp(k->name, name) == 0)
+		if (strcmp(k->name, name) == 0 ||
+		    (strlen(k->name) < strlen(name) &&
+		     k->name[strlen(k->name) - 1] == '-' &&
+		     strncmp(k->name, name, strlen(k->name)) == 0))
 			return k;
 	}
 	return NULL;
