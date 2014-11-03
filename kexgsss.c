@@ -80,7 +80,7 @@ kexgss_server(Kex *kex)
 	 */
 	if (!ssh_gssapi_oid_table_ok()) 
 		if ((mechs = ssh_gssapi_server_mechanisms()))
-			xfree(mechs);
+			free(mechs);
 
 	debug2("%s: Identifying %s", __func__, kex->name);
 	oid = ssh_gssapi_id_kex(NULL, kex->name, kex->kex_type);
@@ -158,7 +158,7 @@ kexgss_server(Kex *kex)
 		maj_status = PRIVSEP(ssh_gssapi_accept_ctx(ctxt, &recv_tok, 
 		    &send_tok, &ret_flags));
 
-		xfree(recv_tok.value);
+		free(recv_tok.value);
 
 		if (maj_status != GSS_S_COMPLETE && send_tok.length == 0)
 			fatal("Zero length token output when incomplete");
@@ -207,7 +207,7 @@ kexgss_server(Kex *kex)
 		fatal("kexgss_server: BN_bin2bn failed");
 
 	memset(kbuf, 0, klen);
-	xfree(kbuf);
+	free(kbuf);
 
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
