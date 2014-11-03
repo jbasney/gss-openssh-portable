@@ -207,9 +207,6 @@ kexgss_server(Kex *kex)
 	if (BN_bin2bn(kbuf, kout, shared_secret) == NULL)
 		fatal("kexgss_server: BN_bin2bn failed");
 
-	memset(kbuf, 0, klen);
-	free(kbuf);
-
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
 	case KEX_GSS_GRP14_SHA1:
@@ -224,7 +221,7 @@ kexgss_server(Kex *kex)
 		break;
 	case KEX_GSS_GEX_SHA1:
 		kexgex_hash(
-		    kex->evp_md,
+		    kex->hash_alg,
 		    kex->client_version_string, kex->server_version_string,
 		    buffer_ptr(&kex->peer), buffer_len(&kex->peer),
 		    buffer_ptr(&kex->my), buffer_len(&kex->my),
@@ -277,8 +274,10 @@ kexgss_server(Kex *kex)
 
 	DH_free(dh);
 
-	kex_derive_keys(kex, hash, hashlen, shared_secret);
+	kex_derive_keys(kex, hash, hashlen, kbuf, kout);
 	BN_clear_free(shared_secret);
+	memset(kbuf, 0, klen);
+	free(kbuf);
 	kex_finish(kex);
 
 	/* If this was a rekey, then save out any delegated credentials we
