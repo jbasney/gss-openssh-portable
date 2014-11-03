@@ -279,7 +279,7 @@ kexgss_client(Kex *kex) {
 		break;
 	case KEX_GSS_GEX_SHA1:
 		kexgex_hash(
-		    kex->evp_md,
+		    kex->hash_alg,
 		    kex->client_version_string,
 		    kex->server_version_string,
 		    buffer_ptr(&kex->my), buffer_len(&kex->my),
