@@ -260,9 +260,6 @@ kexgss_client(Kex *kex) {
 	if (BN_bin2bn(kbuf, kout, shared_secret) == NULL)
 		fatal("kexdh_client: BN_bin2bn failed");
 
-	memset(kbuf, 0, klen);
-	xfree(kbuf);
-
 	switch (kex->kex_type) {
 	case KEX_GSS_GRP1_SHA1:
 	case KEX_GSS_GRP14_SHA1:
@@ -326,7 +323,10 @@ kexgss_client(Kex *kex) {
 	else
 		ssh_gssapi_delete_ctx(&ctxt);
 
-	kex_derive_keys(kex, hash, hashlen, shared_secret);
+	kex_derive_keys(kex, hash, hashlen, kbuf, kout);
+
+	memset(kbuf, 0, klen);
+	xfree(kbuf);
 	BN_clear_free(shared_secret);
 	kex_finish(kex);
 }
