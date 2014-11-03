@@ -122,7 +122,7 @@ ssh_gssapi_krb5_storecreds(ssh_gssapi_client *client)
 	krb5_principal princ;
 	OM_uint32 maj_status, min_status;
 	int len;
-	const char *errmsg, new_ccname;
+	const char *errmsg, *new_ccname;
 
 	if (client->creds == NULL) {
 		debug("No credentials stored");
