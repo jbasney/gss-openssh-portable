@@ -98,10 +98,18 @@ ssh_gssapi_client_mechanisms(const char *host, const char *client) {
 
 char *
 ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
-    const char *host, const char *client) {
+    const char *host, const char *client)
+{
+	static char *groups[] = {
+		KEX_GSS_GRP14_SHA1_ID,
+		KEX_GSS_GEX_SHA1_ID,
+		KEX_GSS_GRP1_SHA1_ID
+	};
+	size_t g;
 	Buffer buf;
 	size_t i;
-	int oidpos, enclen;
+	size_t oidpos;
+	size_t enclen;
 	char *mechs, *encoded;
 	u_char digest[EVP_MAX_MD_SIZE];
 	char deroid[2];
@@ -117,10 +125,7 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 	gss_enc2oid = xmalloc(sizeof(ssh_gss_kex_mapping) *
 	    (gss_supported->count + 1));
 
-	buffer_init(&buf);
-
-	oidpos = 0;
-	for (i = 0; i < gss_supported->count; i++) {
+	for (i = oidpos = 0; i < gss_supported->count; i++) {
 		if (gss_supported->elements[i].length < 128 &&
 		    (*check)(NULL, &(gss_supported->elements[i]), host, client)) {
 
@@ -135,23 +140,9 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 			EVP_DigestFinal(&md, digest, NULL);
 
 			encoded = xmalloc(EVP_MD_size(evp_md) * 2);
+			/* Constant length of a base64 encoded MD5 digest */
 			enclen = __b64_ntop(digest, EVP_MD_size(evp_md),
 			    encoded, EVP_MD_size(evp_md) * 2);
-
-			if (oidpos != 0)
-				buffer_put_char(&buf, ',');
-
-			buffer_append(&buf, KEX_GSS_GEX_SHA1_ID,
-			    sizeof(KEX_GSS_GEX_SHA1_ID) - 1);
-			buffer_append(&buf, encoded, enclen);
-			buffer_put_char(&buf, ',');
-			buffer_append(&buf, KEX_GSS_GRP1_SHA1_ID,
-			    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1);
-			buffer_append(&buf, encoded, enclen);
-			buffer_put_char(&buf, ',');
-			buffer_append(&buf, KEX_GSS_GRP14_SHA1_ID,
-			    sizeof(KEX_GSS_GRP14_SHA1_ID) - 1);
-			buffer_append(&buf, encoded, enclen);
 
 			gss_enc2oid[oidpos].oid = &(gss_supported->elements[i]);
 			gss_enc2oid[oidpos].encoded = encoded;
@@ -160,6 +151,19 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 	}
 	gss_enc2oid[oidpos].oid = NULL;
 	gss_enc2oid[oidpos].encoded = NULL;
+
+	buffer_init(&buf);
+
+	/* Order by the group, not the GSS oid */
+	for (g = 0; g < sizeof(groups)/sizeof(groups[0]); ++g) {
+		for (i = 0; i < oidpos; i++) {
+			if (buffer_len(&buf) != 0)
+				buffer_put_char(&buf, ',');
+			buffer_append(&buf, groups[g], strlen(groups[g]));
+			/* enclen computed above */
+			buffer_append(&buf, gss_enc2oid[i].encoded, enclen);
+		}
+	}
 
 	buffer_put_char(&buf, '\0');
 

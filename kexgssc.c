@@ -45,6 +45,17 @@
 
 #include "ssh-gss.h"
 
+/* ARGSUSED */
+void
+kexgss_client_hook(Kex *kex, void *arg, char *myproposal[PROPOSAL_MAX])
+{
+	char *gss = ssh_gssapi_client_mechanisms(kex->opts.gss_host,
+	    kex->opts.gss_client);
+
+	kex_prop_update_gss(kex, gss, myproposal);
+	free(gss);
+}
+
 void
 kexgss_client(Kex *kex)
 {
@@ -72,11 +83,11 @@ kexgss_client(Kex *kex)
 	    == GSS_C_NO_OID)
 		fatal("Couldn't identify host exchange");
 
-	if (ssh_gssapi_import_name(ctxt, kex->gss_host))
+	if (ssh_gssapi_import_name(ctxt, kex->opts.gss_host))
 		fatal("Couldn't import hostname");
 
-	if (kex->gss_client &&
-	    ssh_gssapi_client_identity(ctxt, kex->gss_client))
+	if (kex->opts.gss_client &&
+	    ssh_gssapi_client_identity(ctxt, kex->opts.gss_client))
 		fatal("Couldn't acquire client credentials");
 
 	switch (kex->kex_type) {
@@ -130,7 +141,7 @@ kexgss_client(Kex *kex)
 		debug("Calling gss_init_sec_context");
 
 		maj_status = ssh_gssapi_init_ctx(ctxt,
-		    kex->gss_deleg_creds, token_ptr, &send_tok,
+		    kex->opts.gss_deleg_creds, token_ptr, &send_tok,
 		    &ret_flags);
 
 		if (GSS_ERROR(maj_status)) {
@@ -317,7 +328,7 @@ kexgss_client(Kex *kex)
 		memcpy(kex->session_id, hash, kex->session_id_len);
 	}
 
-	if (kex->gss_deleg_creds)
+	if (kex->opts.gss_deleg_creds)
 		ssh_gssapi_credentials_updated(ctxt);
 
 	if (gss_kex_context == NULL)

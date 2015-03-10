@@ -254,6 +254,7 @@ keygrab_ssh2(con *c)
 	    (c->c_keytype == KT_RSA ? "ssh-rsa" :
 	    (c->c_keytype == KT_ED25519 ? "ssh-ed25519" :
 	    "ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521"));
+	/* Allocate kex state (start below via kex_start()) */
 	c->c_kex = kex_setup(myproposal);
 #ifdef WITH_OPENSSL
 	c->c_kex->kex[KEX_DH_GRP1_SHA1] = kexdh_client;
@@ -264,6 +265,8 @@ keygrab_ssh2(con *c)
 #endif
 	c->c_kex->kex[KEX_C25519_SHA256] = kexc25519_client;
 	c->c_kex->verify_host_key = hostjump;
+	/* Start key exchange */
+	kex_start(c->c_kex);
 
 	if (!(j = setjmp(kexjmp))) {
 		nonfatal_fatal = 1;

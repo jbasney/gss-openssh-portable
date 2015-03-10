@@ -47,6 +47,16 @@
 
 extern ServerOptions options;
 
+/* ARGSUSED */
+void
+kexgss_server_hook(Kex *kex, void *arg, char *myproposal[PROPOSAL_MAX])
+{
+	char *gss = ssh_gssapi_server_mechanisms();
+
+	kex_prop_update_gss(kex, gss, myproposal);
+	free(gss);
+}
+
 void
 kexgss_server(Kex *kex)
 {

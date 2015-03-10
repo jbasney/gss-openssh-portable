@@ -2545,48 +2545,7 @@ do_ssh2_kex(void)
 	myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = compat_pkalg_proposal(
 	    list_hostkey_types());
 
-#ifdef GSSAPI
-	{
-	char *orig;
-	char *gss = NULL;
-	char *newstr = NULL;
-	orig = myproposal[PROPOSAL_KEX_ALGS];
-
-	/*
-	 * If we don't have a host key, then there's no point advertising the
-	 * other key exchange algorithms
-	 */
-	if (strlen(myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS]) == 0)
-		orig = NULL;
-
-	if (options.gss_keyex)
-		gss = ssh_gssapi_server_mechanisms();
-	else
-		gss = NULL;
-
-	if (gss && orig)
-		xasprintf(&newstr, "%s,%s", gss, orig);
-	else if (gss)
-		newstr = gss;
-	else if (orig)
-		newstr = orig;
-
-	/*
-	 * If we've got GSSAPI mechanisms, then we've got the 'null' host key
-	 * alg, but we can't tell people about it unless its the only host key
-	 * algorithm we support
-	 */
-	if (gss && (strlen(myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS])) == 0)
-		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = "null";
-
-	if (newstr)
-		myproposal[PROPOSAL_KEX_ALGS] = newstr;
-	else
-		fatal("No supported key exchange algorithms");
-	}
-#endif
-
-	/* start key exchange */
+	/* Allocate kex state (start below via kex_start()) */
 	kex = kex_setup(myproposal);
 #ifdef WITH_OPENSSL
 	kex->kex[KEX_DH_GRP1_SHA1] = kexdh_server;
@@ -2601,6 +2560,7 @@ do_ssh2_kex(void)
 		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_server;
 		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_server;
 		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_server;
+		kex_add_hook(kex, kexgss_server_hook, NULL);
 	}
 #endif
 	kex->server = 1;
@@ -2613,6 +2573,8 @@ do_ssh2_kex(void)
 
 	xxx_kex = kex;
 
+	/* start key exchange */
+	kex_start(kex);
 	dispatch_run(DISPATCH_BLOCK, &kex->done, kex);
 
 	session_id2 = kex->session_id;

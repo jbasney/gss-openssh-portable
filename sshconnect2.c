@@ -93,10 +93,17 @@ struct sockaddr *xxx_hostaddr;
 Kex *xxx_kex = NULL;
 
 static int
+once_is_enough(Key *hostkey)
+{
+	return 0;
+}
+
+static int
 verify_host_key_callback(Key *hostkey)
 {
 	if (verify_host_key(xxx_host, xxx_hostaddr, hostkey) == -1)
 		fatal("Host key verification failed.");
+	xxx_kex->verify_host_key = once_is_enough;
 	return 0;
 }
 
@@ -159,36 +166,8 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 	char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
 	Kex *kex;
 
-#ifdef GSSAPI
-	char *orig = NULL, *gss = NULL;
-	char *gss_host = NULL;
-#endif
-
 	xxx_host = host;
 	xxx_hostaddr = hostaddr;
-
-#ifdef GSSAPI
-	if (options.gss_keyex) {
-		/*
-		 * Add the GSSAPI mechanisms currently supported on this client
-		 * to the key exchange algorithm proposal
-		 */
-		orig = myproposal[PROPOSAL_KEX_ALGS];
-
-		if (options.gss_trust_dns)
-			gss_host = (char *)get_canonical_hostname(1);
-		else
-			gss_host = host;
-
-		gss = ssh_gssapi_client_mechanisms(gss_host,
-		    options.gss_client_identity);
-		if (gss) {
-			debug("Offering GSSAPI proposal: %s", gss);
-			xasprintf(&myproposal[PROPOSAL_KEX_ALGS],
-			    "%s,%s", gss, orig);
-		}
-	}
-#endif
 
 	if (options.ciphers == (char *)-1) {
 		logit("No valid ciphers for protocol version 2 given, using defaults.");
@@ -227,24 +206,11 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
 	    myproposal[PROPOSAL_KEX_ALGS]);
 
-#ifdef GSSAPI
-	/*
-	 * If we've got GSSAPI algorithms, then we also support the 'null'
-	 * hostkey, as a last resort
-	 */
-	if (options.gss_keyex && gss) {
-		orig = myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS];
-		xasprintf(&myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS],
-		    "%s,null", orig);
-		free(gss);
-	}
-#endif
-
 	if (options.rekey_limit || options.rekey_interval)
 		packet_set_rekey_limits((u_int32_t)options.rekey_limit,
 		    (time_t)options.rekey_interval);
 
-	/* start key exchange */
+	/* Allocate kex state (start below via kex_start()) */
 	kex = kex_setup(myproposal);
 #ifdef WITH_OPENSSL
 	kex->kex[KEX_DH_GRP1_SHA1] = kexdh_client;
@@ -259,27 +225,24 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_client;
 		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_client;
 		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_client;
+
+		kex->opts.gss_client = options.gss_client_identity;
+		if (options.gss_server_identity)
+			kex->opts.gss_host = options.gss_server_identity;
+		else
+			kex->opts.gss_host = host;
+		kex->opts.gss_deleg_creds = options.gss_deleg_creds;
+		kex_add_hook(kex, kexgss_client_hook, 0);
 	}
 #endif
 	kex->client_version_string=client_version_string;
 	kex->server_version_string=server_version_string;
 	kex->verify_host_key=&verify_host_key_callback;
 
-#ifdef GSSAPI
-	if (options.gss_keyex) {
-		kex->gss_deleg_creds = options.gss_deleg_creds;
-		kex->gss_trust_dns = options.gss_trust_dns;
-		kex->gss_client = options.gss_client_identity;
-		if (options.gss_server_identity) {
-			kex->gss_host = options.gss_server_identity;
-		} else {
-			kex->gss_host = gss_host;
-        }
-	}
-#endif
-
 	xxx_kex = kex;
 
+	/* start key exchange */
+	kex_start(kex);
 	dispatch_run(DISPATCH_BLOCK, &kex->done, kex);
 
 	if (options.use_roaming && !kex->roaming) {
@@ -688,8 +651,6 @@ userauth_gssapi(Authctxt *authctxt)
 
 	if (options.gss_server_identity)
 		gss_host = options.gss_server_identity;
-	else if (options.gss_trust_dns)
-		gss_host = get_canonical_hostname(1);
 	else
 		gss_host = authctxt->host;
 

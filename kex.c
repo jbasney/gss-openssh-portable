@@ -109,20 +109,93 @@ static const struct kexalg kexalg_prefixes[] = {
 	{ NULL, -1, -1, -1 },
 };
 
+#ifdef GSSAPI
+void
+kex_prop_update_gss(Kex *kex, char *gss, char *myproposal[PROPOSAL_MAX])
+{
+	Buffer buf;
+	size_t len = 0;
+	char *p;
+	char *next;
+
+	buffer_init(&buf);
+
+	/* Prepend any available GSSKEX algs */
+	if (gss && (len = strlen(gss)) > 0)
+		buffer_append(&buf, gss, len);
+
+	/* Append any remaining non-GSSKEX algs */
+	for (p = next = myproposal[PROPOSAL_KEX_ALGS]; *p; p = next) {
+		for (len = 0; *next != '\0' && *next++ != ','; /* nop */)
+			++len;
+		if (strncmp(p, KEXGSS, sizeof(KEXGSS "") - 1) == 0)
+			continue;
+		if (buffer_len(&buf) > 0)
+			buffer_put_char(&buf, ',');
+		buffer_append(&buf, p, len);
+	}
+	buffer_put_char(&buf, '\0');
+
+	/* Realloc and update */
+	p = myproposal[PROPOSAL_KEX_ALGS];
+	p = xrealloc(p, 1, buffer_len(&buf));
+	myproposal[PROPOSAL_KEX_ALGS] = p;
+	buffer_get(&buf, p, buffer_len(&buf));
+	buffer_free(&buf);
+
+	if (!gss)
+		return;
+
+	/*
+	 * We support GSSKEX.  If we support no other host keys, enable "null"
+	 */
+	p = myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS];
+	if (p == NULL || *p == '\0') {
+		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = xstrdup("null");
+		return;
+	}
+
+	if (kex->server)
+		return;
+
+	/*
+	 * Append "null" key algorithm if not yet offered, this is "sticky".
+	 */
+	for (next = p; *p; p = next) {
+		for (len = 0; *next != '\0' && *next++ != ','; /* nop */)
+			++len;
+		if (strncmp(p, "null", len > 4 ? len : 4) == 0)
+			return;
+	}
+
+	/* Realloc and update */
+	p = myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS];
+	len = strlen(p);
+	p = xrealloc(p, 1, len + sizeof(",null"));
+	myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = p;
+	strncpy(p + len, ",null", sizeof(",null"));
+}
+#endif /* GSSAPI */
+
 char *
 kex_alg_list(char sep)
 {
 	char *ret = NULL;
 	size_t nlen, rlen = 0;
-	const struct kexalg *k;
+	const struct kexalg *k = kexalgs;
+	const struct kexalg *morealgs = kexalg_prefixes;
 
-	for (k = kexalgs; k->name != NULL; k++) {
+	while (k->name != NULL) {
 		if (ret != NULL)
 			ret[rlen++] = sep;
 		nlen = strlen(k->name);
 		ret = xrealloc(ret, 1, rlen + nlen + 2);
 		memcpy(ret + rlen, k->name, nlen + 1);
 		rlen += nlen;
+		if ((++k)->name == NULL && morealgs) {
+			k = morealgs;
+			morealgs = NULL;
+		}
 	}
 	return ret;
 }
@@ -263,6 +336,19 @@ kex_finish(Kex *kex)
 	kex->name = NULL;
 }
 
+static void
+run_hooks(Kex *kex)
+{
+	Kexhooks *p;
+	char **myproposal;
+
+	myproposal = kex_buf2prop(&kex->my, NULL);
+	for (p = kex->hooks; p; p = p->next)
+		p->hook(kex, p->arg, myproposal);
+	kex_prop2buf(&kex->my, myproposal);
+	kex_prop_free(myproposal);
+}
+
 void
 kex_send_kexinit(Kex *kex)
 {
@@ -279,6 +365,10 @@ kex_send_kexinit(Kex *kex)
 		return;
 	}
 	kex->done = 0;
+
+	/* Last opportunity to modify kex->my before it is used below */
+	if (kex->hooks)
+		run_hooks(kex);
 
 	/* generate a random cookie */
 	if (buffer_len(&kex->my) < KEX_COOKIE_LEN)
@@ -334,6 +424,7 @@ kex_input_kexinit(int type, u_int32_t seq, void *ctxt)
 	kex_kexinit_finish(kex);
 }
 
+/* Delay start so caller can configure hooks, ... */
 Kex *
 kex_setup(char *proposal[PROPOSAL_MAX])
 {
@@ -344,11 +435,32 @@ kex_setup(char *proposal[PROPOSAL_MAX])
 	buffer_init(&kex->my);
 	kex_prop2buf(&kex->my, proposal);
 	kex->done = 0;
-
-	kex_send_kexinit(kex);					/* we start */
-	kex_reset_dispatch();
+	kex->hooks = NULL;
 
 	return kex;
+}
+
+/* Actually start */
+void
+kex_start(Kex *kex)
+{
+	kex_send_kexinit(kex);					/* we start */
+	kex_reset_dispatch();
+}
+
+void
+kex_add_hook(Kex *kex, void (*hook)(Kex *kex, void *, char **), void *arg)
+{
+	Kexhooks **p = &kex->hooks;
+
+	/* Hooks run in the same order as registered */
+	while (p[0])
+		p = &(p[0]->next);
+
+	p[0] = xcalloc(1, sizeof(*p[0]));
+	p[0]->next = NULL;
+	p[0]->hook = hook;
+	p[0]->arg = arg;
 }
 
 static void

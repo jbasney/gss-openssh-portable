@@ -89,7 +89,22 @@ typedef struct Mac Mac;
 typedef struct Comp Comp;
 typedef struct Enc Enc;
 typedef struct Newkeys Newkeys;
+typedef struct Kexopts Kexopts;
+typedef struct Kexhooks Kexhooks;
 
+struct Kexopts {
+#ifdef GSSAPI
+	char	*gss_client;
+	char    *gss_host;
+	int	gss_deleg_creds;
+#endif
+};
+
+struct Kexhooks {
+	Kexhooks *next;
+	void	(*hook)(Kex *, void *, char **);
+	void	*arg;
+};
 struct Enc {
 	char	*name;
 	const Cipher *cipher;
@@ -138,12 +153,8 @@ struct Kex {
 	int	flags;
 	int	hash_alg;
 	int	ec_nid;
-#ifdef GSSAPI
-	int	gss_deleg_creds;
-	int	gss_trust_dns;
-	char    *gss_host;
-	char	*gss_client;
-#endif
+	Kexopts opts;
+	Kexhooks *hooks;
 	char	*client_version_string;
 	char	*server_version_string;
 	int	(*verify_host_key)(Key *);
@@ -158,6 +169,8 @@ int	 kex_names_valid(const char *);
 char	*kex_alg_list(char);
 
 Kex	*kex_setup(char *[PROPOSAL_MAX]);
+void	 kex_start(Kex *);
+void	 kex_add_hook(Kex *, void (*)(Kex *, void *, char **), void *);
 void	 kex_finish(Kex *);
 
 void	 kex_send_kexinit(Kex *);
@@ -177,8 +190,11 @@ void	 kexc25519_client(Kex *);
 void	 kexc25519_server(Kex *);
 
 #ifdef GSSAPI
-void	kexgss_client(Kex *);
-void	kexgss_server(Kex *);
+void	 kexgss_client(Kex *);
+void	 kexgss_server(Kex *);
+void	 kexgss_client_hook(Kex *, void *, char **);
+void	 kexgss_server_hook(Kex *, void *, char **);
+void	 kex_prop_update_gss(Kex *, char *, char **);
 #endif
 
 void
