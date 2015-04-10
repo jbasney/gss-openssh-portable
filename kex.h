@@ -33,6 +33,8 @@
 #include <openssl/ec.h>
 #endif
 
+#include "ssh-gss.h"
+
 #define KEX_COOKIE_LEN	16
 
 #define	KEX_DH1			"diffie-hellman-group1-sha1"
@@ -89,16 +91,7 @@ typedef struct Mac Mac;
 typedef struct Comp Comp;
 typedef struct Enc Enc;
 typedef struct Newkeys Newkeys;
-typedef struct Kexopts Kexopts;
 typedef struct Kexhooks Kexhooks;
-
-struct Kexopts {
-#ifdef GSSAPI
-	char	*gss_client;
-	char    *gss_host;
-	int	gss_deleg_creds;
-#endif
-};
 
 struct Kexhooks {
 	Kexhooks *next;
@@ -153,7 +146,7 @@ struct Kex {
 	int	flags;
 	int	hash_alg;
 	int	ec_nid;
-	Kexopts opts;
+	Kexgss  gss;
 	Kexhooks *hooks;
 	char	*client_version_string;
 	char	*server_version_string;

@@ -77,28 +77,9 @@ ssh_gssapi_oid_table_ok(void)
 	return (gss_enc2oid != NULL);
 }
 
-/*
- * Return a list of the gss-group1-sha1 mechanisms supported by this program
- *
- * We test mechanisms to ensure that we can use them, to avoid starting
- * a key exchange with a bad mechanism
- */
-
-char *
-ssh_gssapi_client_mechanisms(const char *host, const char *client) {
-	gss_OID_set gss_supported;
-	OM_uint32 min_status;
-
-	if (GSS_ERROR(gss_indicate_mechs(&min_status, &gss_supported)))
-		return NULL;
-
-	return(ssh_gssapi_kex_mechs(gss_supported, ssh_gssapi_check_mechanism,
-	    host, client));
-}
-
 char *
 ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
-    const char *host, const char *client)
+    const char *host, const char *client, gss_name_t client_name)
 {
 	static char *groups[] = {
 		KEX_GSS_GRP14_SHA1_ID,
@@ -127,7 +108,8 @@ ssh_gssapi_kex_mechs(gss_OID_set gss_supported, ssh_gssapi_check_fn *check,
 
 	for (i = oidpos = 0; i < gss_supported->count; i++) {
 		if (gss_supported->elements[i].length < 128 &&
-		    (*check)(NULL, &(gss_supported->elements[i]), host, client)) {
+		    (*check)(NULL, &(gss_supported->elements[i]),
+			host, client, client_name)) {
 
 			deroid[0] = SSH_GSS_OIDTYPE;
 			deroid[1] = gss_supported->elements[i].length;
@@ -401,29 +383,30 @@ ssh_gssapi_import_name(Gssctxt *ctx, const char *host)
 }
 
 OM_uint32
-ssh_gssapi_client_identity(Gssctxt *ctx, const char *name)
+ssh_gssapi_client_identity(Gssctxt *ctx, const char *client, gss_name_t name)
 {
-	gss_buffer_desc gssbuf;
-	gss_name_t gssname;
 	OM_uint32 status;
-	gss_OID_set oidset;
+	gss_OID_set_desc mechs;
+	gss_name_t newname = GSS_C_NO_NAME;
 
-	gssbuf.value = (void *) name;
-	gssbuf.length = strlen(gssbuf.value);
+	if (client != NULL && name == GSS_C_NO_NAME) {
+	    gss_buffer_desc gssbuf;
 
-	gss_create_empty_oid_set(&status, &oidset);
-	gss_add_oid_set_member(&status, ctx->oid, &oidset);
+	    gssbuf.value = (void *) client;
+	    gssbuf.length = strlen(gssbuf.value);
+	    ctx->major = gss_import_name(&ctx->minor, &gssbuf,
+		GSS_C_NT_USER_NAME, &newname);
+	    name = newname;
+	}
 
-	ctx->major = gss_import_name(&ctx->minor, &gssbuf,
-	    GSS_C_NT_USER_NAME, &gssname);
-
+	mechs.count = 1;
+	mechs.elements = ctx->oid;
 	if (!ctx->major)
-		ctx->major = gss_acquire_cred(&ctx->minor,
-		    gssname, 0, oidset, GSS_C_INITIATE,
-		    &ctx->client_creds, NULL, NULL);
+		ctx->major = gss_acquire_cred(&ctx->minor, name, 0, &mechs,
+		    GSS_C_INITIATE, &ctx->client_creds, NULL, NULL);
 
-	gss_release_name(&status, &gssname);
-	gss_release_oid_set(&status, &oidset);
+	if (newname != GSS_C_NO_NAME)
+	    (void) gss_release_name(&status, &newname);
 
 	if (ctx->major)
 		ssh_gssapi_error(ctx);
@@ -471,7 +454,7 @@ ssh_gssapi_buildmic(Buffer *b, const char *user, const char *service,
 
 int
 ssh_gssapi_check_mechanism(Gssctxt **ctx, gss_OID oid, const char *host,
-    const char *client)
+    const char *client, gss_name_t name)
 {
 	gss_buffer_desc token = GSS_C_EMPTY_BUFFER;
 	OM_uint32 major, minor;
@@ -490,8 +473,9 @@ ssh_gssapi_check_mechanism(Gssctxt **ctx, gss_OID oid, const char *host,
 	ssh_gssapi_set_oid(*ctx, oid);
 	major = ssh_gssapi_import_name(*ctx, host);
 
-	if (!GSS_ERROR(major) && client)
-		major = ssh_gssapi_client_identity(*ctx, client);
+	if (!GSS_ERROR(major) &&
+	    (client != NULL || name != GSS_C_NO_NAME));
+		major = ssh_gssapi_client_identity(*ctx, client, name);
 
 	if (!GSS_ERROR(major)) {
 		major = ssh_gssapi_init_ctx(*ctx, 0, GSS_C_NO_BUFFER, &token,
@@ -509,13 +493,9 @@ ssh_gssapi_check_mechanism(Gssctxt **ctx, gss_OID oid, const char *host,
 }
 
 int
-ssh_gssapi_credentials_updated(Gssctxt *ctxt)
+ssh_gssapi_credentials_updated(Gssctxt *ctxt, Kexgss *kexgss)
 {
-	static gss_name_t saved_name = GSS_C_NO_NAME;
-	static gss_OID saved_mech = 0;
 	static time_t last_call = 0;
-	static time_t saved_tkt_expiration = 0;
-	static time_t saved_tgt_expiration = 0;
 	gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
 	OM_uint32 lifetime;
 	OM_uint32 major, minor;
@@ -523,6 +503,8 @@ ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 	gss_OID_set_desc mechs;
 
 	if (ctxt) {
+		gss_name_t *nameout = NULL;
+		gss_OID *mechout = NULL;
 
 		debug("Rekey has happened - updating saved versions");
 
@@ -533,9 +515,7 @@ ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 		 * rekey once we have credentials that we *can* determine to
 		 * expire more than an hour from now.
 		 */
-		saved_tkt_expiration = saved_tgt_expiration = now + 3600;
-		(void) gss_release_name(&minor, &saved_name);
-		saved_mech = GSS_C_NO_OID;
+		kexgss->tkt_expiration = kexgss->tgt_expiration = now + 3600;
 
 		/*
 		 * Even if our TGT is not newer than before, if our service
@@ -543,39 +523,41 @@ ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 		 * hope that delegated credentials don't expire sooner than
 		 * the either service ticket or the original TGT, but there's
 		 * no way to know.  This works in practice.
-		 *
-		 * Note that we leave the saved names and mech unchanged on
-		 * error, so if we succeed once, we're never left blind.
 		 */
-		major = gss_inquire_context(&minor, ctxt->context, &saved_name,
-		    NULL, &lifetime, &saved_mech, NULL, NULL, NULL);
+		if (kexgss->name == GSS_C_NO_NAME)
+			nameout = &kexgss->name;
+		if (kexgss->mech == GSS_C_NO_OID)
+			mechout = &kexgss->mech;
+		major = gss_inquire_context(&minor, ctxt->context,
+		    nameout, NULL, &lifetime, mechout, NULL, NULL, NULL);
 		if (GSS_ERROR(major))
 			return 0;
 		if (lifetime != GSS_C_INDEFINITE)
-			saved_tkt_expiration = now + lifetime;
+			kexgss->tkt_expiration = now + lifetime;
 
 		/*
 		 * Save expiration of corresponding client credential. We rekey
 		 * and delegate a new credential as soon as a credential with a
 		 * later expiration time is obtained.
 		 *
-		 * Note, gss_acquire_cred need not and often does not return a
-		 * usable lifetime, because the processing necessary for that is
-		 * "deferred".  So we don't even ask.  Instead we immediately
-		 * call gss_inquire_cred_by_mech(), which does any "deferred"
-		 * work and returns the relevant lifetime.
+		 * Note, gss_acquire_cred() need not and often does not return
+		 * a usable lifetime, because the processing necessary for that
+		 * is "deferred".  So we don't even ask.  Instead, we next call
+		 * gss_inquire_cred_by_mech(), which does any "deferred" work
+		 * and returns the relevant lifetime.
 		 */
 		mechs.count = 1;
-		mechs.elements = saved_mech;
-		major = gss_acquire_cred(&minor, saved_name, GSS_C_INDEFINITE,
-		    &mechs, GSS_C_INITIATE, &cred, NULL, NULL);
+		mechs.elements = kexgss->mech;
+		major = gss_acquire_cred(&minor, kexgss->name,
+		    GSS_C_INDEFINITE, &mechs, GSS_C_INITIATE, &cred,
+		    NULL, NULL);
 		if (GSS_ERROR(major))
 			return 0;
-		major = gss_inquire_cred_by_mech(&minor, cred, saved_mech,
+		major = gss_inquire_cred_by_mech(&minor, cred, kexgss->mech,
 		    NULL, &lifetime, NULL, NULL);
 		gss_release_cred(&minor, &cred);
 		if (lifetime != GSS_C_INDEFINITE)
-			saved_tgt_expiration = now + lifetime;
+			kexgss->tgt_expiration = now + lifetime;
 
 		return 0;
 	}
@@ -592,14 +574,15 @@ ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 	 * If we failed to save the mech (and name) before, just go with
 	 * defaults until we do.
 	 */
-	if (saved_mech != GSS_C_NO_OID && saved_name != GSS_C_NO_NAME) {
+	if (kexgss->mech != GSS_C_NO_OID &&
+	    kexgss->name != GSS_C_NO_NAME) {
 	    mechs.count = 1;
-	    mechs.elements = saved_mech;
-	    major = gss_acquire_cred(&minor, saved_name, GSS_C_INDEFINITE,
+	    mechs.elements = kexgss->mech;
+	    major = gss_acquire_cred(&minor, kexgss->name, GSS_C_INDEFINITE,
 		&mechs, GSS_C_INITIATE, &cred, NULL, NULL);
 	    if (GSS_ERROR(major))
 		    return 0;
-	    major = gss_inquire_cred_by_mech(&minor, cred, saved_mech, NULL,
+	    major = gss_inquire_cred_by_mech(&minor, cred, kexgss->mech, NULL,
 		&lifetime, NULL, NULL);
 	} else {
 	    major = gss_acquire_cred(&minor, GSS_C_NO_NAME, GSS_C_INDEFINITE,
@@ -620,24 +603,17 @@ ssh_gssapi_credentials_updated(Gssctxt *ctxt)
 	if (GSS_ERROR(major))
 		return 0;
 
-	/*
-	 * No point delegating again if we'd have to do it again within
-	 * LIFETIME_QUANTUM!
-	 */
-	if (lifetime < LIFETIME_QUANTUM)
-		return 0;
-
 	/* Redelegate any updated TGT. */
-	if (saved_tgt_expiration &&
-	    now + lifetime > saved_tgt_expiration + LIFETIME_QUANTUM)
+	if (lifetime != GSS_C_INDEFINITE && kexgss->tgt_expiration &&
+	    now + lifetime > kexgss->tgt_expiration + LIFETIME_QUANTUM)
 		return 1;
 
 	/*
 	 * If we're near (within LIFETIME_QUANTUM) of the service ticket
 	 * expiration time, rekey.
 	 */
-	if (saved_tkt_expiration &&
-	    now > saved_tkt_expiration - LIFETIME_QUANTUM)
+	if (kexgss->tkt_expiration &&
+	    now > kexgss->tkt_expiration - LIFETIME_QUANTUM)
 		return 1;
 
 	return 0;

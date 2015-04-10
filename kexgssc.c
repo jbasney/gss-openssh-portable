@@ -45,15 +45,39 @@
 
 #include "ssh-gss.h"
 
+static char *
+client_mechs(Kexgss *kexgss)
+{
+	gss_OID_set mechs = GSS_C_NO_OID_SET;
+	gss_OID_set_desc mech1;
+	OM_uint32 min_status;
+
+	/*
+	 * The first time, we use any available mechanism.  After that, we need
+	 * to use only the mechanism we used the first time (or some other
+	 * non-GSS KEX).
+	 */
+	if (kexgss->mech == GSS_C_NO_OID) {
+		if (GSS_ERROR(gss_indicate_mechs(&min_status, &mechs)))
+			return NULL;
+	} else {
+		mech1.count = 1;
+		mech1.elements = kexgss->mech;
+		mechs = &mech1;
+	}
+
+	return ssh_gssapi_kex_mechs(mechs, ssh_gssapi_check_mechanism,
+	    kexgss->host, kexgss->client, kexgss->name);
+}
+
 /* ARGSUSED */
 void
 kexgss_client_hook(Kex *kex, void *arg, char *myproposal[PROPOSAL_MAX])
 {
-	char *gss = ssh_gssapi_client_mechanisms(kex->opts.gss_host,
-	    kex->opts.gss_client);
+	char *mechs = client_mechs(&kex->gss);
 
-	kex_prop_update_gss(kex, gss, myproposal);
-	free(gss);
+	kex_prop_update_gss(kex, mechs, myproposal);
+	free(mechs);
 }
 
 void
@@ -83,11 +107,11 @@ kexgss_client(Kex *kex)
 	    == GSS_C_NO_OID)
 		fatal("Couldn't identify host exchange");
 
-	if (ssh_gssapi_import_name(ctxt, kex->opts.gss_host))
+	if (ssh_gssapi_import_name(ctxt, kex->gss.host))
 		fatal("Couldn't import hostname");
 
-	if (kex->opts.gss_client &&
-	    ssh_gssapi_client_identity(ctxt, kex->opts.gss_client))
+	if (kex->gss.client &&
+	    ssh_gssapi_client_identity(ctxt, kex->gss.client, kex->gss.name))
 		fatal("Couldn't acquire client credentials");
 
 	switch (kex->kex_type) {
@@ -140,9 +164,8 @@ kexgss_client(Kex *kex)
 	do {
 		debug("Calling gss_init_sec_context");
 
-		maj_status = ssh_gssapi_init_ctx(ctxt,
-		    kex->opts.gss_deleg_creds, token_ptr, &send_tok,
-		    &ret_flags);
+		maj_status = ssh_gssapi_init_ctx(ctxt, kex->gss.deleg_creds,
+		    token_ptr, &send_tok, &ret_flags);
 
 		if (GSS_ERROR(maj_status)) {
 			if (send_tok.length != 0) {
@@ -328,8 +351,8 @@ kexgss_client(Kex *kex)
 		memcpy(kex->session_id, hash, kex->session_id_len);
 	}
 
-	if (kex->opts.gss_deleg_creds)
-		ssh_gssapi_credentials_updated(ctxt);
+	if (kex->gss.deleg_creds)
+		ssh_gssapi_credentials_updated(ctxt, &kex->gss);
 
 	if (gss_kex_context == NULL)
 		gss_kex_context = ctxt;

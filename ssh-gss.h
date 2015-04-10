@@ -26,7 +26,14 @@
 #ifndef _SSH_GSS_H
 #define _SSH_GSS_H
 
-#ifdef GSSAPI
+typedef struct Kexgss Kexgss;
+
+#ifndef GSSAPI
+
+struct Kexgss {
+};
+
+#else
 
 #ifdef HAVE_GSSAPI_H
 #include <gssapi.h>
@@ -50,6 +57,16 @@
 
 # endif /* !HEIMDAL */
 #endif /* KRB5 */
+
+struct Kexgss {
+	gss_OID mech;	/* Saved on first use */
+	gss_name_t name;	/* Saved on first use */
+	char	*client;
+	char    *host;
+	int	deleg_creds;
+	time_t  tgt_expiration;
+	time_t  tkt_expiration;
+};
 
 /* draft-ietf-secsh-gsskeyex-06 */
 #define SSH2_MSG_USERAUTH_GSSAPI_RESPONSE		60
@@ -138,19 +155,19 @@ void ssh_gssapi_build_ctx(Gssctxt **);
 void ssh_gssapi_delete_ctx(Gssctxt **);
 OM_uint32 ssh_gssapi_sign(Gssctxt *, gss_buffer_t, gss_buffer_t);
 void ssh_gssapi_buildmic(Buffer *, const char *, const char *, const char *);
-int ssh_gssapi_check_mechanism(Gssctxt **, gss_OID, const char *, const char *);
-OM_uint32 ssh_gssapi_client_identity(Gssctxt *, const char *);
-int ssh_gssapi_credentials_updated(Gssctxt *);
+int ssh_gssapi_check_mechanism(Gssctxt **, gss_OID, const char *, const char *,
+    gss_name_t);
+OM_uint32 ssh_gssapi_client_identity(Gssctxt *, const char *, gss_name_t);
+int ssh_gssapi_credentials_updated(Gssctxt *, Kexgss *);
 
 /* In the server */
 typedef int ssh_gssapi_check_fn(Gssctxt **, gss_OID, const char *,
-    const char *);
-char *ssh_gssapi_client_mechanisms(const char *, const char *);
+    const char *, gss_name_t);
 char *ssh_gssapi_kex_mechs(gss_OID_set, ssh_gssapi_check_fn *, const char *,
-    const char *);
+    const char *, gss_name_t);
 gss_OID ssh_gssapi_id_kex(Gssctxt *, char *, int);
 int ssh_gssapi_server_check_mech(Gssctxt **,gss_OID, const char *,
-    const char *);
+    const char *, gss_name_t);
 OM_uint32 ssh_gssapi_server_ctx(Gssctxt **, gss_OID);
 int ssh_gssapi_userok(char *name, struct passwd *);
 OM_uint32 ssh_gssapi_checkmic(Gssctxt *, gss_buffer_t, gss_buffer_t);

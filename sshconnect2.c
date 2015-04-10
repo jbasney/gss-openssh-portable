@@ -226,12 +226,14 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_client;
 		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_client;
 
-		kex->opts.gss_client = options.gss_client_identity;
+		kex->gss.mech = GSS_C_NO_OID;
+		kex->gss.name = GSS_C_NO_NAME;
+		kex->gss.client = options.gss_client_identity;
 		if (options.gss_server_identity)
-			kex->opts.gss_host = options.gss_server_identity;
+			kex->gss.host = options.gss_server_identity;
 		else
-			kex->opts.gss_host = host;
-		kex->opts.gss_deleg_creds = options.gss_deleg_creds;
+			kex->gss.host = host;
+		kex->gss.deleg_creds = options.gss_deleg_creds;
 		kex_add_hook(kex, kexgss_client_hook, 0);
 	}
 #endif
@@ -669,7 +671,7 @@ userauth_gssapi(Authctxt *authctxt)
 		if (gss_supported->elements[mech].length < 128 &&
 		    ssh_gssapi_check_mechanism(&gssctxt,
 			&gss_supported->elements[mech], gss_host,
-			options.gss_client_identity)) {
+			options.gss_client_identity, GSS_C_NO_NAME)) {
 			ok = 1; /* Mechanism works */
 		} else {
 			mech++;
