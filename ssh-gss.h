@@ -63,7 +63,7 @@ struct Kexgss {
 	gss_name_t name;	/* Saved on first use */
 	char	*client;
 	char    *host;
-	int	deleg_creds;
+	char	*deleg_creds;
 	time_t  tgt_expiration;
 	time_t  tkt_expiration;
 };
@@ -143,7 +143,7 @@ void ssh_gssapi_prepare_supported_oids(void);
 OM_uint32 ssh_gssapi_test_oid_supported(OM_uint32 *, gss_OID, int *);
 
 OM_uint32 ssh_gssapi_import_name(Gssctxt *, const char *);
-OM_uint32 ssh_gssapi_init_ctx(Gssctxt *, int,
+OM_uint32 ssh_gssapi_init_ctx(Gssctxt *, char *,
     gss_buffer_desc *, gss_buffer_desc *, OM_uint32 *);
 OM_uint32 ssh_gssapi_accept_ctx(Gssctxt *,
     gss_buffer_desc *, gss_buffer_desc *, OM_uint32 *);

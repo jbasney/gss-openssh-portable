@@ -890,8 +890,8 @@ parse_time:
 		goto parse_flag;
 
 	case oGssDelegateCreds:
-		intptr = &options->gss_deleg_creds;
-		goto parse_flag;
+		charptr = &options->gss_deleg_creds;
+		goto parse_string;
 
 	case oGssTrustDns:
 		intptr = &options->gss_trust_dns;
@@ -1583,7 +1583,7 @@ initialize_options(Options * options)
 	options->challenge_response_authentication = -1;
 	options->gss_authentication = -1;
 	options->gss_keyex = -1;
-	options->gss_deleg_creds = -1;
+	options->gss_deleg_creds = NULL;
 	options->gss_trust_dns = -1;
 	options->gss_renewal_rekey = -1;
 	options->gss_client_identity = NULL;
@@ -1713,8 +1713,6 @@ fill_default_options(Options * options)
 		options->gss_authentication = 0;
 	if (options->gss_keyex == -1)
 		options->gss_keyex = 0;
-	if (options->gss_deleg_creds == -1)
-		options->gss_deleg_creds = 0;
 	if (options->gss_trust_dns == -1)
 		options->gss_trust_dns = 0;
 	if (options->gss_renewal_rekey == -1)

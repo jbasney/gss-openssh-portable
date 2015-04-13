@@ -720,6 +720,17 @@ hostname.
 Forward (delegate) credentials to the server.
 The default is
 .Dq no .
+Setting the parameter to
+.Dq yes
+enables credential delegation.  Setting it to
+.Cm user : Ns Ar remotename
+enables credential delegation only if the expansion of
+.Ar remotename
+matches the remote login name.  In the expansion of
+.Ar remotename ,
+.Ql %l
+is replaced with the local user name.
+.Pp
 Note that this option applies to protocol version 2 connections using GSSAPI.
 .It Cm GSSAPIRenewalForcesRekey
 If set to
