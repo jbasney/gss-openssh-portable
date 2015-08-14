@@ -74,6 +74,7 @@ static int ssh_gssapi_generic_userok(
 }
 #endif
 
+#ifdef HAVE_GSS_USEROK
 static int
 ssh_gssapi_generic_localname(ssh_gssapi_client *client,
 			  char **localname) {
@@ -101,7 +102,6 @@ ssh_gssapi_generic_localname(ssh_gssapi_client *client,
   #endif
       }
 
-#ifdef HAVE_GSS_USEROK
 static ssh_gssapi_mech ssh_gssapi_generic_mech = {
   NULL, NULL,
   {0, NULL},
@@ -112,7 +112,7 @@ static ssh_gssapi_mech ssh_gssapi_generic_mech = {
   NULL};
 static const ssh_gssapi_mech *ssh_gssapi_generic_mech_ptr = &ssh_gssapi_generic_mech;
 #else /*HAVE_GSS_USEROK*/
-static const ssh_gssapi_mech ssh_gssapi_generic_mech_ptr = NULL;
+static const ssh_gssapi_mech *ssh_gssapi_generic_mech_ptr = NULL;
 #endif
 
 #ifdef KRB5
@@ -230,6 +230,8 @@ ssh_gssapi_supported_oids(gss_OID_set *oidset)
 	OM_uint32 min_status;
 	int present;
 	gss_OID_set supported;
+
+#ifdef HAVE_GSS_INDICATE_MECHS_BY_ATTRS
 	/* If we have a generic mechanism all OIDs supported */
 	if (ssh_gssapi_generic_mech_ptr) {
 	  gss_OID_desc except_oids[3];
@@ -248,6 +250,7 @@ ssh_gssapi_supported_oids(gss_OID_set *oidset)
 						     oidset)))
 	    return;
 	}
+#endif
 
 	gss_create_empty_oid_set(&min_status, oidset);
 
