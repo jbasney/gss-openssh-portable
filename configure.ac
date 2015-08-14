@@ -4047,7 +4047,7 @@ AC_ARG_WITH([kerberos5],
 #endif
 		]])
 		saved_LIBS="$LIBS"
-		LIBS="$LIBS $K5LIBS"
+		LIBS="$LIBS $K5LIBS $GSSLIBS"
 		AC_CHECK_FUNCS([krb5_cc_new_unique krb5_get_error_message krb5_free_error_message])
 		AC_CHECK_FUNCS([gss_localname gss_userok])
 		LIBS="$saved_LIBS"
