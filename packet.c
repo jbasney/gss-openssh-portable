@@ -2310,6 +2310,18 @@ ssh_packet_get_output(struct ssh *ssh)
 	return (void *)ssh->state->output;
 }
 
+void *
+packet_get_receive_context(struct ssh *ssh)
+{
+    return (void*)&(ssh->state->receive_context);
+}
+
+void *
+packet_get_send_context(struct ssh *ssh)
+{
+    return (void*)&(ssh->state->send_context);
+}
+
 /* XXX TODO update roaming to new API (does not work anyway) */
 
 void *

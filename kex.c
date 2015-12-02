@@ -61,6 +61,10 @@
 extern int client_session_id;
 #endif
 
+#ifdef GSSAPI
+#include "ssh-gss.h"
+#endif
+
 #if OPENSSL_VERSION_NUMBER >= 0x00907000L
 # if defined(HAVE_EVP_SHA256)
 # define evp_ssh_sha256 EVP_sha256
@@ -224,6 +228,7 @@ kex_assemble_names(const char *def, char **list)
 }
 
 /* put algorithm proposal into buffer */
+/* used in sshconnect.c as well as kex.c */
 int
 kex_prop2buf(struct sshbuf *b, char *proposal[PROPOSAL_MAX])
 {
@@ -601,6 +606,26 @@ choose_kex(struct kex *k, char *client, char *server)
 
 	if (k->name == NULL)
 		return SSH_ERR_NO_KEX_ALG_MATCH;
+#ifdef GSSAPI /* substring matching for the GSSAPI methods */
+	if (strncmp(k->name, KEX_GSS_GEX_SHA1_ID,
+	    sizeof(KEX_GSS_GEX_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GEX_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-gex-sha1-* */
+	}
+    if (strncmp(k->name, KEX_GSS_GRP1_SHA1_ID,
+	    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP1_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-group1-sha1-* */
+	}
+    if (strncmp(k->name, KEX_GSS_GRP14_SHA1_ID,
+	    sizeof(KEX_GSS_GRP14_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP14_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-group14-sha1-* */
+    }
+#endif
 	if ((kexalg = kex_alg_by_name(k->name)) == NULL)
 		return SSH_ERR_INTERNAL_ERROR;
 	k->kex_type = kexalg->type;

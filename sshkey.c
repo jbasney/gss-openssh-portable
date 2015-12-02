@@ -90,6 +90,9 @@ static const struct keytype keytypes[] = {
 	    KEY_ED25519_CERT, 0, 1 },
 #ifdef WITH_OPENSSL
 	{ NULL, "RSA1", KEY_RSA1, 0, 0 },
+#ifdef GSSAPI
+	{ "null", "null", KEY_NULL, 0, 0 }, /* 'null' host key alg for GSSAPI */
+#endif
 	{ "ssh-rsa", "RSA", KEY_RSA, 0, 0 },
 	{ "ssh-dss", "DSA", KEY_DSA, 0, 0 },
 # ifdef OPENSSL_HAS_ECC
