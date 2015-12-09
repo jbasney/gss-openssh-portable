@@ -230,9 +230,9 @@ input_userauth_request(int type, u_int32_t seq, void *ctxt)
 	if (authctxt == NULL)
 		fatal("input_userauth_request: no authctxt");
 
-	user = packet_get_string(NULL);
-	service = packet_get_string(NULL);
-	method = packet_get_string(NULL);
+	user = packet_get_cstring(NULL);
+	service = packet_get_cstring(NULL);
+	method = packet_get_cstring(NULL);
 
 #ifdef GSSAPI
 	if (user[0] == '\0') {
