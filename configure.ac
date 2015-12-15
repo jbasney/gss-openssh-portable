@@ -109,10 +109,6 @@ if test "x$gsi_path" != "xno" ; then
     LD="\$(LIBTOOL) --mode=link $CC"
 
     AC_DEFINE(HAVE_GSSAPI_H)
-
-	INSTALL_GSISSH="yes"
-else
-	INSTALL_GSISSH=""
 fi
 # End Globus/GSI section
 
@@ -4192,7 +4188,7 @@ if test "x$gsi_path" != "xno" && test -d "$gsi_path/lib"; then
 	)
     AC_CHECK_FUNCS(globus_gss_assist_map_and_authorize)
 fi
-AC_SUBST(INSTALL_GSISSH)
+AC_SUBST(program_prefix)
 
 dnl
 dnl Check for globus_usage_stats_send
