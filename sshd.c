@@ -1000,7 +1000,7 @@ notify_hostkeys(struct ssh *ssh)
 	debug3("%s: sent %d hostkeys", __func__, nkeys);
 	if (nkeys == 0)
 #ifdef GSI
-		logit("%s: no hostkeys", __func__);
+		logit("%s: no hostkeys, but continuing since GSI is enabled", __func__);
 #else
 		fatal("%s: no hostkeys", __func__);
 	packet_send();
