@@ -999,8 +999,12 @@ notify_hostkeys(struct ssh *ssh)
 	}
 	debug3("%s: sent %d hostkeys", __func__, nkeys);
 	if (nkeys == 0)
+#ifdef GSI
+		logit("%s: no hostkeys", __func__);
+#else
 		fatal("%s: no hostkeys", __func__);
 	packet_send();
+#endif
 	sshbuf_free(buf);
 }
 
