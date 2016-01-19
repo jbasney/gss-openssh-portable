@@ -1,7 +1,7 @@
 /* $OpenBSD: auth2-gss.c,v 1.22 2015/01/19 20:07:45 markus Exp $ */
 
 /*
- * Copyright (c) 2001-2003 Simon Wilkinson. All rights reserved.
+ * Copyright (c) 2001-2007 Simon Wilkinson. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -48,10 +48,59 @@
 
 extern ServerOptions options;
 
+static void ssh_gssapi_userauth_error(Gssctxt *ctxt);
 static int input_gssapi_token(int type, u_int32_t plen, void *ctxt);
 static int input_gssapi_mic(int type, u_int32_t plen, void *ctxt);
 static int input_gssapi_exchange_complete(int type, u_int32_t plen, void *ctxt);
 static int input_gssapi_errtok(int, u_int32_t, void *);
+
+/* 
+ * The 'gssapi_keyex' userauth mechanism.
+ */
+static int
+userauth_gsskeyex(Authctxt *authctxt)
+{
+	int authenticated = 0;
+	Buffer b, b2;
+	gss_buffer_desc mic, gssbuf, gssbuf2;
+	u_int len;
+
+	mic.value = packet_get_string(&len);
+	mic.length = len;
+
+	packet_check_eom();
+
+	ssh_gssapi_buildmic(&b, authctxt->user, authctxt->service,
+	    "gssapi-keyex");
+
+	gssbuf.value = buffer_ptr(&b);
+	gssbuf.length = buffer_len(&b);
+
+	/* client may have used empty username to determine target
+	   name from GSSAPI context */
+	ssh_gssapi_buildmic(&b2, "", authctxt->service, "gssapi-keyex");
+
+	gssbuf2.value = buffer_ptr(&b2);
+	gssbuf2.length = buffer_len(&b2);
+
+	/* gss_kex_context is NULL with privsep, so we can't check it here */
+	if (!GSS_ERROR(PRIVSEP(ssh_gssapi_checkmic(gss_kex_context, 
+						   &gssbuf, &mic))) ||
+	    !GSS_ERROR(PRIVSEP(ssh_gssapi_checkmic(gss_kex_context, 
+						   &gssbuf2, &mic)))) {
+	    if (authctxt->valid && authctxt->user && authctxt->user[0]) {
+            authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user,
+                                                      authctxt->pw,
+                                                      1 /* gssapi-keyex */));
+	    }
+	}
+	
+	buffer_free(&b);
+	buffer_free(&b2);
+	free(mic.value);
+
+	return (authenticated);
+}
 
 /*
  * We only support those mechanisms that we know about (ie ones that we know
@@ -68,7 +117,10 @@ userauth_gssapi(Authctxt *authctxt)
 	u_int len;
 	u_char *doid = NULL;
 
-	if (!authctxt->valid || authctxt->user == NULL)
+	/* authctxt->valid may be 0 if we haven't yet determined
+	   username from gssapi context. */
+
+	if (authctxt->user == NULL)
 		return (0);
 
 	mechs = packet_get_int();
@@ -133,7 +185,7 @@ input_gssapi_token(int type, u_int32_t plen, void *ctxt)
 	Gssctxt *gssctxt;
 	gss_buffer_desc send_tok = GSS_C_EMPTY_BUFFER;
 	gss_buffer_desc recv_tok;
-	OM_uint32 maj_status, min_status, flags;
+	OM_uint32 maj_status, min_status, flags=0;
 	u_int len;
 
 	if (authctxt == NULL || (authctxt->methoddata == NULL && !use_privsep))
@@ -151,6 +203,7 @@ input_gssapi_token(int type, u_int32_t plen, void *ctxt)
 	free(recv_tok.value);
 
 	if (GSS_ERROR(maj_status)) {
+        	ssh_gssapi_userauth_error(gssctxt);
 		if (send_tok.length != 0) {
 			packet_start(SSH2_MSG_USERAUTH_GSSAPI_ERRTOK);
 			packet_put_string(send_tok.value, send_tok.length);
@@ -216,6 +269,32 @@ input_gssapi_errtok(int type, u_int32_t plen, void *ctxt)
 	return 0;
 }
 
+static void
+gssapi_set_username(Authctxt *authctxt)
+{
+    char *lname = NULL;
+
+    if ((authctxt->user == NULL) || (authctxt->user[0] == '\0')) {
+        PRIVSEP(ssh_gssapi_localname(&lname));
+        if (lname && lname[0] != '\0') {
+            if (authctxt->user) free(authctxt->user);
+            authctxt->user = lname;
+            debug("set username to %s from gssapi context", lname);
+            authctxt->pw = PRIVSEP(getpwnamallow(authctxt->user));
+            if (authctxt->pw) {
+                authctxt->valid = 1;
+#ifdef USE_PAM
+                if (options.use_pam)
+                    PRIVSEP(start_pam(authctxt));
+#endif
+            }
+        } else {
+            debug("failed to set username from gssapi context");
+            packet_send_debug("failed to set username from gssapi context");
+        }
+    }
+}
+
 /*
  * This is called when the client thinks we've completed authentication.
  * It should only be enabled in the dispatch handler by the function above,
@@ -231,6 +310,8 @@ input_gssapi_exchange_complete(int type, u_int32_t plen, void *ctxt)
 	if (authctxt == NULL || (authctxt->methoddata == NULL && !use_privsep))
 		fatal("No authentication or GSSAPI context");
 
+	gssapi_set_username(authctxt);
+
 	/*
 	 * We don't need to check the status, because we're only enabled in
 	 * the dispatcher once the exchange is complete
@@ -238,7 +319,13 @@ input_gssapi_exchange_complete(int type, u_int32_t plen, void *ctxt)
 
 	packet_check_eom();
 
-	authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user));
+	/* user should be set if valid but we double-check here */
+	if (authctxt->valid && authctxt->user && authctxt->user[0]) {
+	    authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user,
+                                       authctxt->pw, 0 /* !gssapi-keyex */));
+	} else {
+	    authenticated = 0;
+	}
 
 	authctxt->postponed = 0;
 	dispatch_set(SSH2_MSG_USERAUTH_GSSAPI_TOKEN, NULL);
@@ -273,8 +360,16 @@ input_gssapi_mic(int type, u_int32_t plen, void *ctxt)
 	gssbuf.value = buffer_ptr(&b);
 	gssbuf.length = buffer_len(&b);
 
+    gssapi_set_username(authctxt);
+
 	if (!GSS_ERROR(PRIVSEP(ssh_gssapi_checkmic(gssctxt, &gssbuf, &mic))))
-		authenticated = PRIVSEP(ssh_gssapi_userok(authctxt->user));
+	    if (authctxt->valid && authctxt->user && authctxt->user[0]) {
+            authenticated =
+                PRIVSEP(ssh_gssapi_userok(authctxt->user, authctxt->pw,
+                                              0 /* !gssapi-keyex */));
+	    } else {
+            authenticated = 0;
+	    }
 	else
 		logit("GSSAPI MIC check failed");
 
@@ -289,6 +384,29 @@ input_gssapi_mic(int type, u_int32_t plen, void *ctxt)
 	userauth_finish(authctxt, authenticated, "gssapi-with-mic", NULL);
 	return 0;
 }
+
+static void ssh_gssapi_userauth_error(Gssctxt *ctxt) {
+	char *errstr;
+	OM_uint32 maj,min;
+	
+	errstr=PRIVSEP(ssh_gssapi_last_error(ctxt,&maj,&min));
+	if (errstr) {
+		packet_start(SSH2_MSG_USERAUTH_GSSAPI_ERROR);
+		packet_put_int(maj);
+		packet_put_int(min);
+		packet_put_cstring(errstr);
+		packet_put_cstring("");
+		packet_send();
+		packet_write_wait();
+		free(errstr);
+	}
+}
+
+Authmethod method_gsskeyex = {
+	"gssapi-keyex",
+	userauth_gsskeyex,
+	&options.gss_authentication
+};
 
 Authmethod method_gssapi = {
 	"gssapi-with-mic",

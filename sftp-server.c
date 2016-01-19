@@ -974,6 +974,13 @@ process_setstat(u_int32_t id)
 			status = errno_to_portable(errno);
 	}
 	send_status(id, status);
+
+#ifdef NERSC_MOD
+	char* t1buf = encode_string( name, strlen(name));
+	s_audit("sftp_process_setstat_3", "count=%i int=%d int=%d uristring=%s", 
+		get_client_session_id(), (int)getppid(), id, t1buf);
+	free(t1buf);
+#endif
 	free(name);
 }
 

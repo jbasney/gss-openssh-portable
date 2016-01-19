@@ -92,6 +92,9 @@ enum kex_exchange {
 	KEX_DH_GEX_SHA1,
 	KEX_DH_GEX_SHA256,
 	KEX_ECDH_SHA2,
+	KEX_GSS_GRP1_SHA1,
+	KEX_GSS_GRP14_SHA1,
+	KEX_GSS_GEX_SHA1,
 	KEX_C25519_SHA256,
 	KEX_MAX
 };
@@ -137,6 +140,12 @@ struct kex {
 	struct sshbuf *peer;
 	sig_atomic_t done;
 	u_int	flags;
+#ifdef GSSAPI
+	int	gss_deleg_creds;
+	int	gss_trust_dns;
+	char    *gss_host;
+	char	*gss_client;
+#endif
 	int	hash_alg;
 	int	ec_nid;
 	char	*client_version_string;
@@ -186,6 +195,11 @@ int	 kexecdh_client(struct ssh *);
 int	 kexecdh_server(struct ssh *);
 int	 kexc25519_client(struct ssh *);
 int	 kexc25519_server(struct ssh *);
+
+#ifdef GSSAPI
+int	kexgss_client(struct ssh *);
+int	kexgss_server(struct ssh *);
+#endif
 
 int	 kex_dh_hash(const char *, const char *,
     const u_char *, size_t, const u_char *, size_t, const u_char *, size_t,

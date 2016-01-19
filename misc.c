@@ -160,17 +160,35 @@ set_nodelay(int fd)
 #define WHITESPACE " \t\r\n"
 #define QUOTE	"\""
 
+/* Characters considered as quotations. */
+#define QUOTES "'\""
+
 /* return next token in configuration line */
 char *
 strdelim(char **s)
 {
-	char *old;
+	char *old, *p, *q;
 	int wspace = 0;
 
 	if (*s == NULL)
 		return NULL;
 
 	old = *s;
+
+        if ((q=strchr(QUOTES, (int) *old)) && *q)
+        {
+            /* find next quote character, point old to start of quoted
+             * string */
+            for (p = ++old;*p && *p!=*q; p++)
+                 ;
+            
+            /* find start of next token */
+            *s = (*p) ? p + strspn(p + 1, WHITESPACE) + 1 : NULL;
+            
+            /* terminate 'old' token */
+            *p = '\0';
+            return (old);
+        }
 
 	*s = strpbrk(*s, WHITESPACE QUOTE "=");
 	if (*s == NULL)
@@ -225,6 +243,20 @@ pwcopy(struct passwd *pw)
 	copy->pw_dir = xstrdup(pw->pw_dir);
 	copy->pw_shell = xstrdup(pw->pw_shell);
 	return copy;
+}
+
+void
+pwfree(struct passwd *pw)
+{
+	free(pw->pw_name);
+	free(pw->pw_passwd);
+	free(pw->pw_gecos);
+#ifdef HAVE_PW_CLASS_IN_PASSWD
+	free(pw->pw_class);
+#endif
+	free(pw->pw_dir);
+	free(pw->pw_shell);
+	free(pw);
 }
 
 /*

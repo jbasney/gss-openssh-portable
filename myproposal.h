@@ -115,6 +115,9 @@
 	"aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc," \
 	"aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se"
 
+#define KEX_ENCRYPT_INCLUDE_NONE KEX_SERVER_ENCRYPT \
+	",none"
+
 #define KEX_SERVER_MAC \
 	"umac-64-etm@openssh.com," \
 	"umac-128-etm@openssh.com," \
@@ -168,6 +171,8 @@
 
 #define	KEX_DEFAULT_COMP	"none,zlib@openssh.com,zlib"
 #define	KEX_DEFAULT_LANG	""
+
+#define KEX_ENCRYPT_INCLUDE_NONE KEX_SERVER_ENCRYPT ",none"
 
 #define KEX_CLIENT \
 	KEX_CLIENT_KEX, \

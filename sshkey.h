@@ -62,6 +62,9 @@ enum sshkey_types {
 	KEY_DSA_CERT,
 	KEY_ECDSA_CERT,
 	KEY_ED25519_CERT,
+#ifdef GSSAPI
+	KEY_NULL, /* 'null' host key alg for GSSAPI mechs */
+#endif
 	KEY_UNSPEC
 };
 

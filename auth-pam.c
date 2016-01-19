@@ -122,6 +122,10 @@ extern u_int utmp_len;
  */
 typedef pthread_t sp_pthread_t;
 #else
+#define pthread_create openssh_pthread_create
+#define pthread_exit openssh_pthread_exit
+#define pthread_cancel openssh_pthread_cancel
+#define pthread_join openssh_pthread_join
 typedef pid_t sp_pthread_t;
 #endif
 
@@ -272,6 +276,56 @@ sshpam_chauthtok_ruid(pam_handle_t *pamh, int flags)
 # define pam_chauthtok(a,b)	(sshpam_chauthtok_ruid((a), (b)))
 #endif
 
+struct passwd *
+sshpam_getpw(const char *user)
+{
+	struct passwd *pw;
+
+	if ((pw = getpwnam(user)) != NULL)
+		return(pw);
+
+	debug("PAM: faking passwd struct for user '%.100s'", user);
+	if ((pw = getpwnam(SSH_PRIVSEP_USER)) == NULL)
+		return NULL;
+	pw->pw_name = xstrdup(user);	/* XXX leak */
+	pw->pw_shell = "/bin/true";
+	pw->pw_gecos = "sshd fake PAM user";
+	return (pw);
+}
+
+void
+sshpam_check_userchanged(void)
+{
+	int sshpam_err;
+	struct passwd *pw;
+	const char *user;
+
+	debug("sshpam_check_userchanged");
+	sshpam_err = pam_get_item(sshpam_handle, PAM_USER,
+                              (const void **)&user);
+	if (sshpam_err != PAM_SUCCESS)
+		fatal("PAM: could not get PAM_USER: %s",
+		    pam_strerror(sshpam_handle, sshpam_err));
+	debug("sshpam_check_userchanged: user was '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+	if (strcmp(user, sshpam_authctxt->pw->pw_name) != 0) {
+		debug("PAM: user mapped from '%.100s' to '%.100s'",
+		    sshpam_authctxt->pw->pw_name, user);
+		if ((pw = getpwnam(user)) == NULL)
+			fatal("PAM: could not get passwd entry for user "
+			    "'%.100s' provided by PAM_USER", user);
+		pwfree(sshpam_authctxt->pw);
+		sshpam_authctxt->pw = pwcopy(pw);
+		sshpam_authctxt->valid = allowed_user(pw);
+		free(sshpam_authctxt->user);
+		sshpam_authctxt->user = xstrdup(user);
+		debug("PAM: user '%.100s' now %svalid", user,
+		    sshpam_authctxt->valid ? "" : "in");
+	}
+	debug("sshpam_check_userchanged: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+}
+
 void
 sshpam_password_change_required(int reqd)
 {
@@ -294,7 +348,7 @@ sshpam_password_change_required(int reqd)
 static void
 import_environments(Buffer *b)
 {
-	char *env;
+	char *env, *user;
 	u_int i, num_env;
 	int err;
 
@@ -304,6 +358,17 @@ import_environments(Buffer *b)
 	/* Import variables set by do_pam_account */
 	sshpam_account_status = buffer_get_int(b);
 	sshpam_password_change_required(buffer_get_int(b));
+	if (options.permit_pam_user_change) {
+        user = buffer_get_string(b, NULL);
+	debug("PAM: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+        debug("PAM: got username '%.100s' from thread", user);
+        if ((err = pam_set_item(sshpam_handle, PAM_USER, user)) != PAM_SUCCESS)
+            fatal("PAM: failed to set PAM_USER: %s",
+                  pam_strerror(sshpam_handle, err));
+        pwfree(sshpam_authctxt->pw);
+        sshpam_authctxt->pw = pwcopy(sshpam_getpw(user));
+    }
 
 	/* Import environment from subprocess */
 	num_env = buffer_get_int(b);
@@ -470,6 +535,13 @@ sshpam_thread(void *ctxtp)
 	if (sshpam_err != PAM_SUCCESS)
 		goto auth_fail;
 
+	if (options.permit_pam_user_change) {
+	debug("sshpam_thread: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+        sshpam_check_userchanged();
+	debug("sshpam_thread: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+    }
 	if (compat20) {
 		if (!do_pam_account()) {
 			sshpam_err = PAM_ACCT_EXPIRED;
@@ -490,6 +562,11 @@ sshpam_thread(void *ctxtp)
 	/* Export variables set by do_pam_account */
 	buffer_put_int(&buffer, sshpam_account_status);
 	buffer_put_int(&buffer, sshpam_authctxt->force_pwchange);
+	if (options.permit_pam_user_change) {
+	debug("sshpam_thread: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+        buffer_put_cstring(&buffer, sshpam_authctxt->pw->pw_name);
+    }
 
 	/* Export any environment strings set in child */
 	for(i = 0; environ[i] != NULL; i++)
@@ -907,6 +984,19 @@ do_pam_account(void)
 	debug3("PAM: %s pam_acct_mgmt = %d (%s)", __func__, sshpam_err,
 	    pam_strerror(sshpam_handle, sshpam_err));
 
+	if (options.permit_pam_user_change) {
+	debug("do_pam_account: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+        sshpam_check_userchanged();
+	debug("do_pam_account: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+        if (getpwnam(sshpam_authctxt->pw->pw_name) == NULL)
+            fatal("PAM: completed authentication but PAM account invalid");
+	debug("do_pam_account: user is '%.100s'",
+	      sshpam_authctxt->pw->pw_name);
+    }
+
+
 	if (sshpam_err != PAM_SUCCESS && sshpam_err != PAM_NEW_AUTHTOK_REQD) {
 		sshpam_account_status = 0;
 		return (sshpam_account_status);
@@ -1204,6 +1294,9 @@ sshpam_auth_passwd(Authctxt *authctxt, const char *password)
 		    pam_strerror(sshpam_handle, sshpam_err));
 
 	sshpam_err = pam_authenticate(sshpam_handle, flags);
+	if (options.permit_pam_user_change) {
+        sshpam_check_userchanged();
+    }
 	sshpam_password = NULL;
 	if (sshpam_err == PAM_SUCCESS && authctxt->valid) {
 		debug("PAM: password authentication accepted for %.100s",
