@@ -396,6 +396,7 @@ auth_root_allowed(const char *method)
 	case PERMIT_NO_PASSWD:
 		if (strcmp(method, "publickey") == 0 ||
 		    strcmp(method, "hostbased") == 0 ||
+		    strcmp(method, "gssapi-keyex") == 0 ||
 		    strcmp(method, "gssapi-with-mic") == 0)
 			return 1;
 		break;
