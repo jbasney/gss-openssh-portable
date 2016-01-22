@@ -548,6 +548,7 @@ main(int ac, char **av)
 	sanitise_stdfd();
 
 	__progname = ssh_get_progname(av[0]);
+	init_pathnames();
 
 #ifndef HAVE_SETPROCTITLE
 	/* Prepare for later setproctitle emulation */

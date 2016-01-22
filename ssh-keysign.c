@@ -179,6 +179,8 @@ main(int argc, char **argv)
 	u_int32_t rnd[256];
 #endif
 
+	init_pathnames();
+
 	/* Ensure that stdin and stdout are connected */
 	if ((fd = open(_PATH_DEVNULL, O_RDWR)) < 2)
 		exit(1);

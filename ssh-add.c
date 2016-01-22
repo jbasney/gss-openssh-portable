@@ -489,6 +489,7 @@ main(int argc, char **argv)
 	sanitise_stdfd();
 
 	__progname = ssh_get_progname(argv[0]);
+	init_pathnames();
 	seed_rng();
 
 #ifdef WITH_OPENSSL
