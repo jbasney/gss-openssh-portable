@@ -785,12 +785,14 @@ kex_choose_conf(struct ssh *ssh)
 			free(t4buf);
 			}
 #endif
+		/*
+		 * client starts with ctos = 0 && log flag = 0 and no log.
+		 * 2nd client pass ctos = 1 and flag = 1 so no log.
+		 * server starts with ctos = 1 && log_flag = 0 so log.
+		 * 2nd sever pass ctos = 1 && log flag = 1 so no log.
+		 * -cjr
+		 */
 
-		/* client starts withctos = 0 && log flag = 0 and no log*/
-		/* 2nd client pass ctos=1 and flag = 1 so no log*/
-		/* server starts with ctos =1 && log_flag = 0 so log */
-		/* 2nd sever pass ctos = 1 && log flag = 1 so no log*/
-		/* -cjr*/
 		if (ctos && !log_flag) {
 			logit("SSH: Server;Ltype: Kex;Remote: %s-%d;Enc: %s;MAC: %s;Comp: %s",
 			    ssh_get_remote_ipaddr(ssh),
