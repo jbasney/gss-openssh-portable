@@ -2582,6 +2582,7 @@ channel_output_poll(void)
 					packet_start(SSH2_MSG_CHANNEL_DATA);
 					packet_put_int(c->remote_id);
 					packet_put_string(data, dlen);
+					packet_send();
 					packet_length = packet_send();
 					c->remote_window -= dlen;
 					free(data);

@@ -182,6 +182,7 @@ static const struct sock_filter preauth_insns[] = {
 #ifdef __NR_read
 	SC_ALLOW(read),
 #endif
+	SC_ALLOW(exit_group),
 
 #ifdef NERSC_MOD
 	SC_ALLOW(sendto),
