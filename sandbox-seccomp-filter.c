@@ -126,7 +126,6 @@ static const struct sock_filter preauth_insns[] = {
 	SC_DENY(stat64, EACCES),
 #endif
 #endif
-
 	/* Syscalls to permit */
 #ifdef __NR_brk
 	SC_ALLOW(brk),
