@@ -135,16 +135,23 @@
 #include <syslog.h>
 
 #include "openbsd-compat/sys-queue.h"
+#include "ssh.h"
 #include "channels.h"
 #include "log.h"
 #include "misc.h"
 #include "xmalloc.h"
 #include "version.h"
+#include "servconf.h"
+#include "readconf.h"
 #include "nersc.h"
 
 /* this is for the stringencoders data */
 #include "modp_burl.h"
 #include "modp_burl_data.h"
+
+/* import */
+int audit_disabled;
+extern char *__progname;
 
 int client_session_id;
 int sis_socket = -1;		  /* socket test varible */
@@ -505,6 +512,9 @@ static int sis_write(char *buffer)
  */
 void s_audit(const char *_event, const char *fmt, ...)
 {
+	if ( audit_disabled == 1 )
+		return;
+
 	va_list args;
 	char msgbuf[NERSCMSGBUF] = "";
 	char fmtbuf[NERSCMSGBUF] = "";

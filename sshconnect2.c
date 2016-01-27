@@ -82,8 +82,10 @@ extern char *server_version_string;
 extern Options options;
 struct kex *xxx_kex;
 
-/* tty_flag is set in ssh.c. use this in ssh_userauth2 */
-/* if it is set then prevent the switch to the null cipher */
+/*
+ * tty_flag is set in ssh.c. Use this in ssh_userauth2:
+ * if it is set, then prevent the switch to the null cipher.
+ */
 
 extern int tty_flag;
 
@@ -489,10 +491,11 @@ ssh_userauth2(const char *local_user, const char *server_user, char *host,
 	pubkey_cleanup(&authctxt);
 	dispatch_range(SSH2_MSG_USERAUTH_MIN, SSH2_MSG_USERAUTH_MAX, NULL);
 
-	/* if the user wants to use the none cipher do it */
-	/* post authentication and only if the right conditions are met */
-	/* both of the NONE commands must be true and there must be no */
-	/* tty allocated */
+	/*
+	 * If the user wants to use the none cipher, do it post authentication
+	 * and only if the right conditions are met -- both of the NONE commands
+	 * must be true and there must be no tty allocated.
+	 */
 	if ((options.none_switch == 1) && (options.none_enabled == 1)) {
 		if (!tty_flag) { /* no null on tty sessions */
 			debug("Requesting none rekeying...");

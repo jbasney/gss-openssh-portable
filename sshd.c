@@ -154,6 +154,7 @@ extern char n_ntop[NI_MAXHOST];
 extern char n_port[NI_MAXHOST];
 extern int client_session_id;
 extern char interface_list[256];
+extern int audit_disabled = 0;
 #endif
 
 extern char *__progname;
@@ -661,6 +662,8 @@ privsep_preauth_child(void)
 	arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 	RAND_seed(rnd, sizeof(rnd));
+	if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+		fatal("%s: RAND_bytes failed", __func__);
 #endif
 	explicit_bzero(rnd, sizeof(rnd));
 
@@ -804,6 +807,8 @@ privsep_postauth(Authctxt *authctxt)
 	arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 	RAND_seed(rnd, sizeof(rnd));
+	if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+		fatal("%s: RAND_bytes failed", __func__);
 #endif
 	explicit_bzero(rnd, sizeof(rnd));
 
@@ -1530,6 +1535,8 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 			RAND_seed(rnd, sizeof(rnd));
+			if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+				fatal("%s: RAND_bytes failed", __func__);
 #endif
 			explicit_bzero(rnd, sizeof(rnd));
 		}
@@ -1853,6 +1860,13 @@ main(int ac, char **av)
 	getnameinfo(options.listen_addrs->ai_addr, options.listen_addrs->ai_addrlen,
 		n_ntop, sizeof(n_ntop), n_port,sizeof(n_port),
 		NI_NUMERICHOST|NI_NUMERICSERV); 
+
+	/* To avoid linking issues, we just set a variable here based on the running configuration
+	 *   not my favorite
+	 */
+	if ( options.audit_disabled )
+		audit_disabled = 1;
+
 #endif
 
 	debug("sshd version %s, %s", SSH_VERSION,
@@ -2780,17 +2794,17 @@ do_ssh2_kex(void)
 	struct kex *kex;
 	int r;
 
-        if (options.none_enabled == 1)
-                debug ("WARNING: None cipher enabled"); 
+	if (options.none_enabled == 1)
+		debug("WARNING: None cipher enabled");
 
 	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
-            options.kex_algorithms);
+	    options.kex_algorithms);
 	myproposal[PROPOSAL_ENC_ALGS_CTOS] = compat_cipher_proposal(
 	    options.ciphers);
 	myproposal[PROPOSAL_ENC_ALGS_STOC] = compat_cipher_proposal(
 	    options.ciphers);
-        myproposal[PROPOSAL_MAC_ALGS_CTOS] =
-            myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
+	myproposal[PROPOSAL_MAC_ALGS_CTOS] =
+	    myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
 
 	if (options.compression == COMP_NONE) {
 		myproposal[PROPOSAL_COMP_ALGS_CTOS] =

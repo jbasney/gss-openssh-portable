@@ -187,7 +187,9 @@ typedef struct {
 	int	hpn_disabled;		/* disable hpn functionality. false by default */
 	int	hpn_buffer_size;	/* set the hpn buffer size - default 3MB */
 
-	int	none_enabled;		/* enable NONE cipher switch */	
+	int	none_enabled;		/* Enable NONE cipher switch */
+
+	int	audit_disabled;		/* disable SSHD instrumentation */
 
 	int	permit_tun;
 

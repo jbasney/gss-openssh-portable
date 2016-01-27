@@ -154,7 +154,7 @@ typedef enum {
 	oSendEnv, oControlPath, oControlMaster, oControlPersist,
 	oHashKnownHosts,
 	oTunnel, oTunnelDevice, oLocalCommand, oPermitLocalCommand,
-	oNoneEnabled, oNoneSwitch,
+	oNoneEnabled, oNoneSwitch, oAuditDisabled,
 	oTcpRcvBufPoll, oTcpRcvBuf, oHPNDisabled, oHPNBufferSize,
 	oVisualHostKey, oUseRoaming,
 	oKexAlgorithms, oIPQoS, oRequestTTY, oIgnoreUnknown, oProxyUseFdpass,
@@ -298,6 +298,7 @@ static struct {
 	{ "tcprcvbufpoll", oTcpRcvBufPoll },
 	{ "tcprcvbuf", oTcpRcvBuf },
 	{ "hpndisabled", oHPNDisabled },
+	{ "auditdisabled", oAuditDisabled },
 	{ "hpnbuffersize", oHPNBufferSize },
 
 	{ NULL, oBadOption }
@@ -950,12 +951,14 @@ parse_time:
 	case oNoneEnabled:
 		intptr = &options->none_enabled;
 		goto parse_flag;
- 
-	/* we check to see if the command comes from the */
-	/* command line or not. If it does then enable it */
-	/* otherwise fail. NONE should never be a default configuration */
+
+	/*
+	 * We check to see if the command comes from the command
+	 * line or not. If it does then enable it otherwise fail.
+	 *  NONE should never be a default configuration.
+	 */
 	case oNoneSwitch:
-		if (strcmp(filename,"command-line") == 0) {
+		if (strcmp(filename, "command-line") == 0) {
 			intptr = &options->none_switch;
 			goto parse_flag;
 		} else {
@@ -967,6 +970,10 @@ parse_time:
 
 	case oHPNDisabled:
 		intptr = &options->hpn_disabled;
+		goto parse_flag;
+
+	case oAuditDisabled:
+		intptr = &options->audit_disabled;
 		goto parse_flag;
 
 	case oHPNBufferSize:
@@ -1749,6 +1756,7 @@ initialize_options(Options * options)
 	options->none_enabled = -1;
 	options->hpn_disabled = -1;
 	options->hpn_buffer_size = -1;
+	options->audit_disabled = -1;
 	options->tcp_rcv_buf_poll = -1;
 	options->tcp_rcv_buf = -1;
 	options->proxy_use_fdpass = -1;
@@ -1921,6 +1929,8 @@ fill_default_options(Options * options)
 		options->none_enabled = 0;
 	if (options->hpn_disabled == -1)
 		options->hpn_disabled = 0;
+	if (options->audit_disabled == -1)
+		options->audit_disabled = 0;
 	if (options->hpn_buffer_size > -1) {
 		/* if a user tries to set the size to 0 set it to 1KB */
 		if (options->hpn_buffer_size == 0)
