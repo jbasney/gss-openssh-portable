@@ -57,13 +57,15 @@ if test "x$gsi_path" != "xno" ; then
 	# include explicit openssl dependency to get consistent LIBS
 	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl])
 
-	CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
-	LIBS="$LIBS $GLOBUS_PKG_LIBS"
+	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
+	GLOBUS_LIBS="$LIBS $GLOBUS_PKG_LIBS"
 	LD="\$(LIBTOOL) --mode=link $CC"
 
 	AC_DEFINE(HAVE_GSSAPI_H)
 	AC_SUBST(program_prefix, "gsi")
 fi
+AC_SUBST(GLOBUS_CFLAGS)
+AC_SUBST(GLOBUS_LIBS)
 # End Globus/GSI section
 
 AC_CONFIG_HEADER([config.h])

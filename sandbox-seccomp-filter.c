@@ -168,7 +168,6 @@ static const struct sock_filter preauth_insns[] = {
 #endif
 #ifdef __NR_munmap
 	SC_ALLOW(munmap),
-<<<<<<< HEAD
 #endif
 #ifdef __NR__newselect
 	SC_ALLOW(_newselect),
@@ -182,7 +181,6 @@ static const struct sock_filter preauth_insns[] = {
 #ifdef __NR_read
 	SC_ALLOW(read),
 #endif
-=======
 	SC_ALLOW(exit_group),
 
 #ifdef NERSC_MOD
@@ -192,7 +190,6 @@ static const struct sock_filter preauth_insns[] = {
 	SC_ALLOW(connect),
 #endif
 
->>>>>>> add nersc mod
 #ifdef __NR_rt_sigprocmask
 	SC_ALLOW(rt_sigprocmask),
 #endif
