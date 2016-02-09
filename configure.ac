@@ -56,6 +56,10 @@ if test "x$gsi_path" != "xno" ; then
 
 	# include explicit openssl dependency to get consistent LIBS
 	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl])
+	PKG_CHECK_MODULES([OPENSSL], [openssl])
+
+        CFLAGS="$CFLAGS $OPENSSL_CFLAGS"
+        LDFLAGS="$LDFLAGS $OPENSSL_LIBS"
 
 	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
 	GLOBUS_LIBS="$LIBS $GLOBUS_PKG_LIBS"

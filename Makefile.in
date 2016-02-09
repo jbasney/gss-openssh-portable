@@ -1,7 +1,7 @@
 # $Id: Makefile.in,v 1.365 2014/08/30 06:23:07 djm Exp $
 
 # uncomment if you run a non bourne compatable shell. Ie. csh
-#SHELL = @SH@
+SHELL = @SHELL@
 
 AUTORECONF=autoreconf
 
@@ -18,6 +18,7 @@ sysconfdir=@sysconfdir@
 piddir=@piddir@
 srcdir=@srcdir@
 top_srcdir=@top_srcdir@
+top_builddir=@top_builddir@
 program_prefix=@program_prefix@
 
 DESTDIR=
@@ -37,6 +38,7 @@ PATHS= -D_PATH_SSH_ASKPASS_DEFAULT=\"$(ASKPASS_PROGRAM)\" \
 	-D_PATH_PRIVSEP_CHROOT_DIR=\"$(PRIVSEP_PATH)\"
 
 CC=@CC@
+LIBTOOL=@LIBTOOL@
 LD=@LD@
 CFLAGS=@CFLAGS@ @GLOBUS_CFLAGS@
 CPPFLAGS=-I. -I$(srcdir) @CPPFLAGS@ $(PATHS) @DEFS@
@@ -186,7 +188,7 @@ ssh-pkcs11-helper$(EXEEXT): $(LIBCOMPAT) libssh.a ssh-pkcs11-helper.o ssh-pkcs11
 	$(LD) -o $@ ssh-pkcs11-helper.o ssh-pkcs11.o $(LDFLAGS) -lssh -lopenbsd-compat -lssh -lopenbsd-compat $(LIBS)
 
 ssh-keyscan$(EXEEXT): $(LIBCOMPAT) libssh.a ssh-keyscan.o roaming_dummy.o
-	$(LD) -o $@ ssh-keyscan.o roaming_dummy.o $(LDFLAGS) -lssh -lopenbsd-compat -lssh $(LIBS)
+	$(LD) -o $@ ssh-keyscan.o roaming_dummy.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
 
 sftp-server$(EXEEXT): $(LIBCOMPAT) libssh.a sftp.o sftp-common.o sftp-server.o sftp-server-main.o
 	$(LD) -o $@ sftp-server.o sftp-common.o sftp-server-main.o $(LDFLAGS) -lssh -lopenbsd-compat $(LIBS)
