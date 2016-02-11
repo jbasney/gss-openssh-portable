@@ -288,6 +288,29 @@ catman-do:
 distprep: catman-do
 	$(AUTORECONF)
 	-rm -rf autom4te.cache
+distdir=gsi-openssh-7.1p2
+distsubdirs=$(srcdir)/scard $(srcdir)/openbsd-compat $(srcdir)/contrib $(srcdir)/regress
+
+distdir:
+	rm -rf "$(distdir)"
+	mkdir -p "$(distdir)"
+	(find "$(srcdir)" -maxdepth 1 -type f \( -name $(distdir).tar.gz -o -print \); \
+	find ${distsubdirs} ) | \
+	while read fullpath; do \
+            f="$${fullpath#$(srcdir)/}"; \
+            if [ -d "$(srcdir)/$$f" ]; then \
+                mkdir -p "$(distdir)/$$f"; \
+            else \
+                cp "$(srcdir)/$${f}" "$(distdir)/$${f}"; \
+            fi; \
+        done
+	if [ -f $(distdir)/Makefile ]; then \
+		$(MAKE) -C $(distdir) distclean; \
+	fi
+
+dist: distdir
+	tar cf - "$(distdir)" | gzip -9 > "$(distdir).tar.gz"
+	rm -rf "$(distdir)"
 
 install: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf host-key check-config
 install-nokeys: $(CONFIGFILES) $(MANPAGES) $(TARGETS) install-files install-sysconf

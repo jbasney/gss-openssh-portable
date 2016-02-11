@@ -30,6 +30,7 @@ AC_LANG([C])
 
 # Check whether the user wants GSI (Globus) support
 gsi_path="no"
+LT_INIT
 AC_ARG_WITH([gsi],
 	AS_HELP_STRING(
 		[--with-gsi],
@@ -51,7 +52,6 @@ if test "x$gsi_path" != "xno" ; then
 		GSSAPI="GSI"
 	fi
 
-	LT_INIT
 	PKG_PROG_PKG_CONFIG([0.28])
 
 	# include explicit openssl dependency to get consistent LIBS
