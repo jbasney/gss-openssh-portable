@@ -500,8 +500,15 @@ ssh_gssapi_getclient(Gssctxt *ctx, ssh_gssapi_client *client)
 		return (ctx->major);
 	}
 
+#ifndef MECHGLUE
 	if ((ctx->major = gss_duplicate_name(&ctx->minor, ctx->client,
 					     &client->ctx_name)))
+#else
+	// MechGlue library doesn't define gss_duplicate_name
+	if ((ctx->major = gss_import_name(&ctx->minor, &ename,
+					     GSS_C_NT_USER_NAME,
+					     &client->ctx_name)))
+#endif
 	  return ctx->major;
 	    
 	gss_release_buffer(&ctx->minor, &ename);
