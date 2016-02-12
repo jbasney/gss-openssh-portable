@@ -82,7 +82,11 @@ init_pathnames()
     if (gl) {
         sshdir = compose2(gl, SSHDIR);
         if (access(sshdir, X_OK) < 0) {
-            logit("%s not found.", sshdir);
+            free(sshdir);
+            sshdir = NULL;
+        }
+        sshdir = compose2(gl, GSISSHDIR);
+        if (access(sshdir, X_OK) < 0) {
             free(sshdir);
             sshdir = NULL;
         }
