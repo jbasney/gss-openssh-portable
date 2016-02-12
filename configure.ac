@@ -30,87 +30,46 @@ AC_LANG([C])
 
 # Check whether the user wants GSI (Globus) support
 gsi_path="no"
-AC_ARG_WITH(gsi,
-	[  --with-gsi              Enable Globus GSI authentication support],
-	[
-		gsi_path="$withval"
-	]
-)
+LT_INIT
+AC_ARG_WITH([gsi],
+	AS_HELP_STRING(
+		[--with-gsi],
+		[Enable Globus GSI authentication support]),
+	[gsi_path="$withval"])
 
-AC_ARG_WITH(globus,
-	[  --with-globus           Enable Globus GSI authentication support],
-	[
-		gsi_path="$withval"
-	]
-)
-
-AC_ARG_WITH(globus-static,
-	[  --with-globus-static    Link statically with Globus GSI libraries],
-	[
-		gsi_static="-static"
-		if test "x$gsi_path" = "xno" ; then
-			gsi_path="$withval"
-		fi
-	]
-)
-
-# Check whether the user has a Globus flavor type
-globus_flavor_type="no"
-AC_ARG_WITH(globus-flavor,
-	[  --with-globus-flavor=TYPE  Specify Globus flavor type (ex: gcc32dbg)],
-	[
-		globus_flavor_type="$withval"
-		if test "x$gsi_path" = "xno" ; then
-			gsi_path="yes"
-		fi
-	]
-)
+AC_ARG_WITH([globus],
+	AS_HELP_STRING(
+		[--with-globus],
+		[Enable Globus GSI authentication support]),
+	[gsi_path="$withval"])
 
 if test "x$gsi_path" != "xno" ; then
 	# Globus GSSAPI configuration
 	AC_MSG_CHECKING(for Globus GSI)
 	AC_DEFINE(GSI, 1, [Define if you want GSI/Globus authentication support.])
-
 	if test -z "$GSSAPI"; then
 		AC_DEFINE(GSSAPI)
 		GSSAPI="GSI"
 	fi
 
-	if test "x$gsi_path" = "xyes" ; then
-		if test -z "$GLOBUS_LOCATION" ; then
-			AC_MSG_ERROR(GLOBUS_LOCATION environment variable must be set.)
-		else
-			gsi_path="$GLOBUS_LOCATION"
-		fi
-	fi
-	GLOBUS_LOCATION="$gsi_path"
-	export GLOBUS_LOCATION
-    LD_LIBRARY_PATH="${gsi_path}/lib:$LD_LIBRARY_PATH"
-    export LD_LIBRARY_PATH
+	PKG_PROG_PKG_CONFIG([0.28])
 
-	if test -d "${gsi_path}/lib/pkgconfig" ; then
-        PKG_CONFIG_PATH="${gsi_path}/lib/pkgconfig:$PKG_CONFIG_PATH"
-        export PKG_CONFIG_PATH
-    elif test -d "${gsi_path}/lib64/pkgconfig" ; then
-        PKG_CONFIG_PATH="${gsi_path}/lib64/pkgconfig:$PKG_CONFIG_PATH"
-        export PKG_CONFIG_PATH
-    else
-		AC_MSG_ERROR(${gsi_path}/lib/pkgconfig not found.)
-    fi
+	# include explicit openssl dependency to get consistent LIBS
+	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl])
+	PKG_CHECK_MODULES([OPENSSL], [openssl])
 
-    LT_INIT
-    PKG_PROG_PKG_CONFIG([0.28])
+        CFLAGS="$CFLAGS $OPENSSL_CFLAGS"
+        LDFLAGS="$LDFLAGS $OPENSSL_LIBS"
 
-    # include explicit openssl dependency to get consistent LIBS
-    PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl])
+	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
+	GLOBUS_LIBS="$LIBS $GLOBUS_PKG_LIBS"
+	LD="\$(LIBTOOL) --mode=link $CC"
 
-    CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
-    LIBS="$LIBS $GLOBUS_PKG_LIBS"
-    LD="\$(LIBTOOL) --mode=link $CC"
-
-    AC_DEFINE(HAVE_GSSAPI_H)
-    AC_SUBST(program_prefix, "gsi")
+	AC_DEFINE(HAVE_GSSAPI_H)
+	AC_SUBST(program_prefix, "gsi")
 fi
+AC_SUBST(GLOBUS_CFLAGS)
+AC_SUBST(GLOBUS_LIBS)
 # End Globus/GSI section
 
 AC_CONFIG_HEADER([config.h])
@@ -4168,27 +4127,7 @@ AC_SUBST([SSHLIBS])
 AC_SUBST([SSHDLIBS])
 
 # Finish configuring Globus GSSAPI
-if test "x$gsi_path" != "xno" && test -d "$gsi_path/lib"; then
-	if test ! -z "$need_dash_r" ; then
-		LDFLAGS="$LDFLAGS -R${gsi_path}/lib"
-	fi
-	if test ! -z "$blibpath" ; then
-		blibpath="$blibpath:${gsi_path}/lib"
-	fi
-	# test that we got the libraries OK
-	AC_MSG_CHECKING(Globus linkline)
-	AC_TRY_LINK(
-		[],
-		[],
-		[
-			AC_MSG_RESULT(yes)
-		],
-		[
-			AC_MSG_ERROR(link with Globus libraries failed)
-		]
-	)
-    AC_CHECK_FUNCS(globus_gss_assist_map_and_authorize)
-fi
+AC_CHECK_FUNCS(globus_gss_assist_map_and_authorize)
 
 dnl
 dnl Check for globus_usage_stats_send
