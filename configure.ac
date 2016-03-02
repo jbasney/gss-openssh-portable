@@ -43,6 +43,8 @@ AC_ARG_WITH([globus],
 		[Enable Globus GSI authentication support]),
 	[gsi_path="$withval"])
 
+PKG_PROG_PKG_CONFIG([0.22])
+
 if test "x$gsi_path" != "xno" ; then
 	# Globus GSSAPI configuration
 	AC_MSG_CHECKING(for Globus GSI)
@@ -52,10 +54,9 @@ if test "x$gsi_path" != "xno" ; then
 		GSSAPI="GSI"
 	fi
 
-	PKG_PROG_PKG_CONFIG([0.28])
 
 	# include explicit openssl dependency to get consistent LIBS
-	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl])
+	PKG_CHECK_MODULES([GLOBUS_PKG], [globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common])
 	PKG_CHECK_MODULES([OPENSSL], [openssl])
 
         CFLAGS="$CFLAGS $OPENSSL_CFLAGS"
