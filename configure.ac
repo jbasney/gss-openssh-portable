@@ -28,6 +28,34 @@ AC_LANG([C])
 # Handle Globus configuration right away, because the Globus flavor
 # determines our compiler options.
 
+# Check whether the user wants GSSAPI mechglue support
+AC_ARG_WITH(mechglue,
+	[  --with-mechglue=PATH    Build with GSSAPI mechglue library],
+	[
+		AC_MSG_CHECKING(for mechglue library)
+
+		if test -e ${withval}/libgssapi.a ; then
+		    mechglue_lib=${withval}/libgssapi.a
+		elif test -e ${withval}/lib/libgssapi.a ; then
+		    mechglue_lib=${withval}/lib/libgssapi.a
+		else
+		    AC_MSG_ERROR("Can't find libgssapi in ${withval}");
+		fi
+		GLOBUS_LIBS="${mechglue_lib} $GLOBUS_LIBS"
+		AC_MSG_RESULT(${mechglue_lib})
+
+		AC_CHECK_LIB(dl, dlopen, , )
+		if test $ac_cv_lib_dl_dlopen = yes; then
+		   LDFLAGS="$LDFLAGS -ldl -Wl,-Bsymbolic"
+		fi
+
+		AC_DEFINE(GSSAPI)
+		AC_DEFINE(MECHGLUE, 1, [Define this if you're building with GSSAPI MechGlue.])
+		GSSAPI="mechglue"
+	]
+)
+
+
 # Check whether the user wants GSI (Globus) support
 gsi_path="no"
 LT_INIT
@@ -63,7 +91,7 @@ if test "x$gsi_path" != "xno" ; then
         LDFLAGS="$LDFLAGS $OPENSSL_LIBS"
 
 	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
-	GLOBUS_LIBS="$LIBS $GLOBUS_PKG_LIBS"
+	GLOBUS_LIBS="$GLOBUS_LIBS $GLOBUS_PKG_LIBS"
 	LD="\$(LIBTOOL) --mode=link $CC"
 
 	AC_DEFINE(HAVE_GSSAPI_H)
@@ -4143,34 +4171,6 @@ AC_CHECK_FUNC(globus_usage_stats_send_array,
               AC_DEFINE([HAVE_GLOBUS_USAGE_SEND_ARRAY], 1,
                         [Have Globus Usage send_array]))
 
-# Check whether the user wants GSSAPI mechglue support
-AC_ARG_WITH(mechglue,
-	[  --with-mechglue=PATH    Build with GSSAPI mechglue library],
-	[
-		AC_MSG_CHECKING(for mechglue library)
-
-		if test -e ${withval}/libgssapi.a ; then
-		    mechglue_lib=${withval}/libgssapi.a
-		elif test -e ${withval}/lib/libgssapi.a ; then
-		    mechglue_lib=${withval}/lib/libgssapi.a
-		else
-		    AC_MSG_ERROR("Can't find libgssapi in ${withval}");
-		fi
-		LIBS="${mechglue_lib} $LIBS"
-		AC_MSG_RESULT(${mechglue_lib})
-
-		AC_CHECK_LIB(dl, dlopen, , )
-		if test $ac_cv_lib_dl_dlopen = yes; then
-		   LDFLAGS="$LDFLAGS -ldl -Wl,-Bsymbolic"
-		fi
-
-		AC_DEFINE(GSSAPI)
-		AC_DEFINE(MECHGLUE, 1, [Define this if you're building with GSSAPI MechGlue.])
-		GSSAPI="mechglue"
-	]
-)
-
-
 NERSC_MOD='no'
 AC_ARG_WITH(nerscmod,
 	[  --with-nerscmod Add sshd instrumentation],
@@ -4346,9 +4346,12 @@ AC_ARG_WITH([kerberos5],
 			blibpath="$blibpath:${KRB5ROOT}/lib"
 		fi
 
+		# These headers conflict with GSI headers when mechglue is being used.
+		if test "$GSSAPI" -a "$GSSAPI" != "mechglue"; then
 		AC_CHECK_HEADERS([gssapi.h gssapi/gssapi.h gssapi/gssapi_ext.h])
 		AC_CHECK_HEADERS([gssapi_krb5.h gssapi/gssapi_krb5.h])
 		AC_CHECK_HEADERS([gssapi_generic.h gssapi/gssapi_generic.h])
+		fi
 
 		AC_SEARCH_LIBS([k_hasafs], [kafs], [AC_DEFINE([USE_AFS], [1],
 			[Define this if you want to use libkafs' AFS support])])
@@ -4364,7 +4367,10 @@ AC_ARG_WITH([kerberos5],
 		LIBS="$LIBS $K5LIBS $GSSLIBS"
 		AC_CHECK_FUNCS([krb5_cc_new_unique krb5_get_error_message krb5_free_error_message])
 		AC_CHECK_FUNCS([gss_localname gss_userok])
+		# mechglue library doesn't have gss_indicate_mechs_by_attrs
+		if test "$GSSAPI" -a "$GSSAPI" != "mechglue"; then
 		AC_CHECK_FUNCS([gss_indicate_mechs_by_attrs])
+		fi
 		LIBS="$saved_LIBS"
 
 	fi
