@@ -58,6 +58,7 @@ AC_ARG_WITH(mechglue,
 
 # Check whether the user wants GSI (Globus) support
 gsi_path="no"
+program_prefix=""
 LT_INIT
 AC_ARG_WITH([gsi],
 	AS_HELP_STRING(
@@ -100,6 +101,9 @@ fi
 AC_SUBST(GLOBUS_CFLAGS)
 AC_SUBST(GLOBUS_LIBS)
 # End Globus/GSI section
+
+# applies to non-GSI builds as well.
+LD="\$(LIBTOOL) --mode=link $CC"
 
 AC_CONFIG_HEADER([config.h])
 AC_PROG_CC
@@ -4310,6 +4314,8 @@ AC_ARG_WITH([kerberos5],
 					])
 				])
 
+			# These headers conflict with GSI headers
+			if test "x$gsi_path" = "xno" ; then
 			AC_CHECK_HEADER([gssapi.h], ,
 				[ unset ac_cv_header_gssapi_h
 				  CPPFLAGS="$CPPFLAGS -I${KRB5ROOT}/include/gssapi"
@@ -4318,6 +4324,7 @@ AC_ARG_WITH([kerberos5],
 				  )
 				]
 			)
+			fi
 
 			oldCPP="$CPPFLAGS"
 			CPPFLAGS="$CPPFLAGS -I${KRB5ROOT}/include/gssapi"
@@ -4346,8 +4353,8 @@ AC_ARG_WITH([kerberos5],
 			blibpath="$blibpath:${KRB5ROOT}/lib"
 		fi
 
-		# These headers conflict with GSI headers when mechglue is being used.
-		if test "$GSSAPI" -a "$GSSAPI" != "mechglue"; then
+		# These headers conflict with GSI headers
+		if test "x$gsi_path" = "xno" ; then
 		AC_CHECK_HEADERS([gssapi.h gssapi/gssapi.h gssapi/gssapi_ext.h])
 		AC_CHECK_HEADERS([gssapi_krb5.h gssapi/gssapi_krb5.h])
 		AC_CHECK_HEADERS([gssapi_generic.h gssapi/gssapi_generic.h])
