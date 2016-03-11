@@ -370,7 +370,8 @@ fill_default_server_options(ServerOptions *options)
 	if (options->hpn_disabled == -1)
 		options->hpn_disabled = 0;
 	if (options->audit_disabled == -1)
-		options->audit_disabled = 0;
+		// Auditing disabled by default for GSI-OpenSSH
+		options->audit_disabled = 1;
 
 	if (options->hpn_buffer_size == -1) {
 		/* option not explicitly set. Now we have to figure out */
