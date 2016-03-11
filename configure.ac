@@ -93,6 +93,11 @@ if test "x$gsi_path" != "xno" ; then
 	GLOBUS_CFLAGS="$CFLAGS $GLOBUS_PKG_CFLAGS"
 	GLOBUS_LIBS="$GLOBUS_LIBS $GLOBUS_PKG_LIBS"
 	LD="\$(LIBTOOL) --mode=link $CC"
+        AC_DEFINE([HAVE_GLOBUS_GSS_ASSIST_MAP_AND_AUTHORIZE], [1],
+		[Have globus_gss_assist_map_and_authorize])
+        AC_DEFINE([HAVE_GLOBUS_USAGE], [1], [Have Globus Usage])
+        AC_DEFINE([HAVE_GLOBUS_USAGE_SEND_ARRAY], [1],
+                        [Have Globus Usage send_array])
 
 	AC_DEFINE(HAVE_GSSAPI_H)
 	AC_SUBST(program_prefix, "gsi")
@@ -4154,22 +4159,6 @@ AC_ARG_WITH([selinux],
 )
 AC_SUBST([SSHLIBS])
 AC_SUBST([SSHDLIBS])
-
-# Finish configuring Globus GSSAPI
-AC_CHECK_FUNCS(globus_gss_assist_map_and_authorize)
-
-dnl
-dnl Check for globus_usage_stats_send
-dnl
-AC_CHECK_FUNC(globus_usage_stats_send,
-              AC_DEFINE([HAVE_GLOBUS_USAGE], 1, [Have Globus Usage]))
-
-dnl
-dnl Check for globus_usage_stats_send_array
-dnl
-AC_CHECK_FUNC(globus_usage_stats_send_array,
-              AC_DEFINE([HAVE_GLOBUS_USAGE_SEND_ARRAY], 1,
-                        [Have Globus Usage send_array]))
 
 NERSC_MOD='no'
 AC_ARG_WITH(nerscmod,
