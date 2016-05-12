@@ -154,7 +154,7 @@ extern char n_ntop[NI_MAXHOST];
 extern char n_port[NI_MAXHOST];
 extern int client_session_id;
 extern char interface_list[256];
-extern int audit_disabled = 0;
+extern int audit_disabled;
 #endif
 
 extern char *__progname;
