@@ -1864,7 +1864,9 @@ main(int ac, char **av)
 	/* To avoid linking issues, we just set a variable here based on the running configuration
 	 *   not my favorite
 	 */
-	if ( options.audit_disabled )
+	if ( options.audit_disabled == 0)
+		audit_disabled = 0;
+	else
 		audit_disabled = 1;
 
 #endif

@@ -150,7 +150,7 @@
 #include "modp_burl_data.h"
 
 /* import */
-int audit_disabled;
+int audit_disabled = 1; /* Disabled by default so client paths don't try to audit */
 extern char *__progname;
 
 int client_session_id;
