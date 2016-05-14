@@ -171,7 +171,7 @@ initialize_server_options(ServerOptions *options)
 	options->chroot_directory = NULL;
 	options->authorized_keys_command = NULL;
 	options->authorized_keys_command_user = NULL;
-	options->disable_usage_stats = 0;
+	options->disable_usage_stats = 1;
 	options->usage_stats_targets = NULL;
 	options->revoked_keys_file = NULL;
 	options->trusted_user_ca_keys = NULL;

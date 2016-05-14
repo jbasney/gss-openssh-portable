@@ -154,6 +154,10 @@ Subsystem	sftp	/usr/libexec/sftp-server
 # Disable sshd auditing
 #AuditDisabled yes
 
+# Usage Metrics
+#UsageStatsTargets usage-stats.example.edu:4810
+#DisableUsageStats Yes
+
 # Example of overriding settings on a per-user basis
 #Match User anoncvs
 #	X11Forwarding no
@@ -161,6 +165,3 @@ Subsystem	sftp	/usr/libexec/sftp-server
 #	PermitTTY no
 #	ForceCommand cvs server
 
-
-# Usage Metrics
-#UsageStatsTargets usage-stats.example.edu:4810
