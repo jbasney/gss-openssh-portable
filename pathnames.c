@@ -9,7 +9,7 @@
 #define USRDIR "/usr"
 #define BINDIR "/bin"
 #define LIBEXEC "/libexec"
-#define GSISSHDIR "/etc/gsissh"
+#define DEFAULT_GSISSHDIR "/etc/gsissh"
 #define SSHDIR "/etc/ssh"
 #define VARDIR "/var"
 #define VARRUN "/var/run"
@@ -82,11 +82,7 @@ init_pathnames()
     if (gl) {
         sshdir = compose2(gl, SSHDIR);
         if (access(sshdir, X_OK) < 0) {
-            free(sshdir);
-            sshdir = NULL;
-        }
-        sshdir = compose2(gl, GSISSHDIR);
-        if (access(sshdir, X_OK) < 0) {
+            logit("%s not found.", sshdir);
             free(sshdir);
             sshdir = NULL;
         }
@@ -94,8 +90,52 @@ init_pathnames()
     if (!sshdir) {
         sshdir = strdup(GSISSHDIR);
         if (access(sshdir, X_OK) < 0) {
-            fatal("%s not found.", sshdir);
+            logit("%s not found.", sshdir);
+            free(sshdir);
+            sshdir = NULL;
         }
+    }
+    if ((!sshdir) && gl) {
+        sshdir = compose2(gl, GSISSHDIR);
+        if (access(sshdir, X_OK) < 0) {
+            logit("%s not found.", sshdir);
+            free(sshdir);
+            sshdir = NULL;
+        }
+    }
+    if (!sshdir) {
+        sshdir = strdup(DEFAULT_GSISSHDIR);
+        if (access(sshdir, X_OK) < 0) {
+            logit("%s not found.", sshdir);
+            free(sshdir);
+            sshdir = NULL;
+        }
+    }
+    if ((!sshdir) && gl) {
+        sshdir = compose2(gl, DEFAULT_GSISSHDIR);
+        if (access(sshdir, X_OK) < 0) {
+            logit("%s not found.", sshdir);
+            free(sshdir);
+            sshdir = NULL;
+        }
+    }
+#if defined(__APPLE__) && defined(__MACH__)
+    if (!sshdir)
+    {
+        char * home = getenv("HOME");
+        if (home)
+        {
+            sshdir = compose2(home, GSISSHDIR);
+            if (access(sshdir, X_OK) < 0) {
+                logit("%s not found.", sshdir);
+                free(sshdir);
+                sshdir = NULL;
+            }
+        }
+    }
+#endif /* APPLE && __MACH__ */
+    if (!sshdir) {
+        fatal("sshdir not found. Check your installation or set GLOBUS_LOCATION");
     }
 
     /* lots of one time memory leaks here */
