@@ -1,0 +1,2 @@
+language: c
+before_install: make -f Makefile.in distprep
