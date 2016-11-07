@@ -8,3 +8,5 @@ install:
   - autoreconf
   - ./configure --with-globus-flavor=gcc64dbg
   - make
+after_success:
+  - ./gsissh -V
