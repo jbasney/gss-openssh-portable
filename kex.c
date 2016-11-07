@@ -1,4 +1,4 @@
-/* $OpenBSD: kex.c,v 1.105 2015/01/30 00:22:25 djm Exp $ */
+/* $OpenBSD: kex.c,v 1.109 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
  *
@@ -53,7 +53,17 @@
 
 #include "ssherr.h"
 #include "sshbuf.h"
+#include "canohost.h"
 #include "digest.h"
+
+#ifdef NERSC_MOD
+#include "nersc.h"
+extern int client_session_id;
+#endif
+
+#ifdef GSSAPI
+#include "ssh-gss.h"
+#endif
 
 #if OPENSSL_VERSION_NUMBER >= 0x00907000L
 # if defined(HAVE_EVP_SHA256)
@@ -155,7 +165,70 @@ kex_names_valid(const char *names)
 	return 1;
 }
 
+/*
+ * Concatenate algorithm names, avoiding duplicates in the process.
+ * Caller must free returned string.
+ */
+char *
+kex_names_cat(const char *a, const char *b)
+{
+	char *ret = NULL, *tmp = NULL, *cp, *p;
+	size_t len;
+
+	if (a == NULL || *a == '\0')
+		return NULL;
+	if (b == NULL || *b == '\0')
+		return strdup(a);
+	if (strlen(b) > 1024*1024)
+		return NULL;
+	len = strlen(a) + strlen(b) + 2;
+	if ((tmp = cp = strdup(b)) == NULL ||
+	    (ret = calloc(1, len)) == NULL) {
+		free(tmp);
+		return NULL;
+	}
+	strlcpy(ret, a, len);
+	for ((p = strsep(&cp, ",")); p && *p != '\0'; (p = strsep(&cp, ","))) {
+		if (match_list(ret, p, NULL) != NULL)
+			continue; /* Algorithm already present */
+		if (strlcat(ret, ",", len) >= len ||
+		    strlcat(ret, p, len) >= len) {
+			free(tmp);
+			free(ret);
+			return NULL; /* Shouldn't happen */
+		}
+	}
+	free(tmp);
+	return ret;
+}
+
+/*
+ * Assemble a list of algorithms from a default list and a string from a
+ * configuration file. The user-provided string may begin with '+' to
+ * indicate that it should be appended to the default.
+ */
+int
+kex_assemble_names(const char *def, char **list)
+{
+	char *ret;
+
+	if (list == NULL || *list == NULL || **list == '\0') {
+		*list = strdup(def);
+		return 0;
+	}
+	if (**list != '+') {
+		return 0;
+	}
+
+	if ((ret = kex_names_cat(def, *list + 1)) == NULL)
+		return SSH_ERR_ALLOC_FAIL;
+	free(*list);
+	*list = ret;
+	return 0;
+}
+
 /* put algorithm proposal into buffer */
+/* used in sshconnect.c as well as kex.c */
 int
 kex_prop2buf(struct sshbuf *b, char *proposal[PROPOSAL_MAX])
 {
@@ -208,13 +281,13 @@ kex_buf2prop(struct sshbuf *raw, int *first_kex_follows, char ***propp)
 		debug2("kex_parse_kexinit: %s", proposal[i]);
 	}
 	/* first kex follows / reserved */
-	if ((r = sshbuf_get_u8(b, &v)) != 0 ||
-	    (r = sshbuf_get_u32(b, &i)) != 0)
+	if ((r = sshbuf_get_u8(b, &v)) != 0 ||	/* first_kex_follows */
+	    (r = sshbuf_get_u32(b, &i)) != 0)	/* reserved */
 		goto out;
 	if (first_kex_follows != NULL)
-		*first_kex_follows = i;
-	debug2("kex_parse_kexinit: first_kex_follows %d ", v);
-	debug2("kex_parse_kexinit: reserved %u ", i);
+		*first_kex_follows = v;
+	debug2("first_kex_follows %d ", v);
+	debug2("reserved %u ", i);
 	r = 0;
 	*propp = proposal;
  out:
@@ -229,6 +302,8 @@ kex_prop_free(char **proposal)
 {
 	u_int i;
 
+	if (proposal == NULL)
+		return;
 	for (i = 0; i < PROPOSAL_MAX; i++)
 		free(proposal[i]);
 	free(proposal);
@@ -446,6 +521,7 @@ kex_free(struct kex *kex)
 	free(kex->session_id);
 	free(kex->client_version_string);
 	free(kex->server_version_string);
+	free(kex->failed_choice);
 	free(kex);
 }
 
@@ -530,6 +606,26 @@ choose_kex(struct kex *k, char *client, char *server)
 
 	if (k->name == NULL)
 		return SSH_ERR_NO_KEX_ALG_MATCH;
+#ifdef GSSAPI /* substring matching for the GSSAPI methods */
+	if (strncmp(k->name, KEX_GSS_GEX_SHA1_ID,
+	    sizeof(KEX_GSS_GEX_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GEX_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-gex-sha1-* */
+	}
+    if (strncmp(k->name, KEX_GSS_GRP1_SHA1_ID,
+	    sizeof(KEX_GSS_GRP1_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP1_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-group1-sha1-* */
+	}
+    if (strncmp(k->name, KEX_GSS_GRP14_SHA1_ID,
+	    sizeof(KEX_GSS_GRP14_SHA1_ID) - 1) == 0) {
+		k->kex_type = KEX_GSS_GRP14_SHA1;
+        k->hash_alg = SSH_DIGEST_SHA1;
+        return 0; /* gss-group14-sha1-* */
+    }
+#endif
 	if ((kexalg = kex_alg_by_name(k->name)) == NULL)
 		return SSH_ERR_INTERNAL_ERROR;
 	k->kex_type = kexalg->type;
@@ -587,6 +683,11 @@ kex_choose_conf(struct ssh *ssh)
 	int nenc, nmac, ncomp;
 	u_int mode, ctos, need, dh_need, authlen;
 	int r, first_kex_follows;
+	int log_flag = 0;
+	int auth_flag;
+
+	auth_flag = packet_authentication_state(ssh);
+	debug("AUTH STATE IS %d", auth_flag);
 
 	if ((r = kex_buf2prop(kex->my, NULL, &my)) != 0 ||
 	    (r = kex_buf2prop(kex->peer, &first_kex_follows, &peer)) != 0)
@@ -624,28 +725,96 @@ kex_choose_conf(struct ssh *ssh)
 		nmac  = ctos ? PROPOSAL_MAC_ALGS_CTOS  : PROPOSAL_MAC_ALGS_STOC;
 		ncomp = ctos ? PROPOSAL_COMP_ALGS_CTOS : PROPOSAL_COMP_ALGS_STOC;
 		if ((r = choose_enc(&newkeys->enc, cprop[nenc],
-		    sprop[nenc])) != 0)
+		    sprop[nenc])) != 0) {
+			kex->failed_choice = peer[nenc];
+			peer[nenc] = NULL;
 			goto out;
+		}
 		authlen = cipher_authlen(newkeys->enc.cipher);
 		/* ignore mac for authenticated encryption */
 		if (authlen == 0 &&
 		    (r = choose_mac(ssh, &newkeys->mac, cprop[nmac],
-		    sprop[nmac])) != 0)
+		    sprop[nmac])) != 0) {
+			kex->failed_choice = peer[nmac];
+			peer[nmac] = NULL;
 			goto out;
+		}
 		if ((r = choose_comp(&newkeys->comp, cprop[ncomp],
-		    sprop[ncomp])) != 0)
+		    sprop[ncomp])) != 0) {
+			kex->failed_choice = peer[ncomp];
+			peer[ncomp] = NULL;
 			goto out;
+		}
+		debug("REQUESTED ENC.NAME is '%s'", newkeys->enc.name);
+		if (strcmp(newkeys->enc.name, "none") == 0) {
+			debug("Requesting NONE. Authflag is %d", auth_flag);
+			if (auth_flag == 1)
+				debug("None requested post authentication.");
+			else
+				fatal("Pre-authentication none cipher requests are not allowed.");
+		}
 		debug("kex: %s %s %s %s",
 		    ctos ? "client->server" : "server->client",
 		    newkeys->enc.name,
 		    authlen == 0 ? newkeys->mac.name : "<implicit>",
 		    newkeys->comp.name);
+
+#ifdef NERSC_MOD
+		if ( ctos ) {
+
+                        const char def_enc_name[] = "<implicit>";
+                        const char def_mac_name[] = "<implicit>";
+                        const char def_comp_name[] = "<implicit>";
+                        const char def_vers_string[] = "<implicit>";
+
+                        char* t1buf = ((authlen != 0 || !newkeys->enc.name) ? (encode_string(def_enc_name, sizeof(def_enc_name)-1)) : (encode_string(newkeys->enc.name, strlen(newkeys->enc.name))));
+                        char* t2buf = ((authlen != 0 || !newkeys->mac.name) ? (encode_string(def_mac_name, sizeof(def_mac_name)-1)) : (encode_string(newkeys->mac.name, strlen(newkeys->mac.name))));
+                        char* t3buf = ((authlen != 0 || !newkeys->comp.name) ? (encode_string(def_comp_name, sizeof(def_comp_name)-1)) : (encode_string(newkeys->comp.name, strlen(newkeys->comp.name))));
+
+			/* t4buf is not derived from authlen directly, but in  */
+			/*  the event that that value is borked, play it safe  */
+			/*  and bail on this as well cause paranoid ...        */
+                        char* t4buf = ((authlen != 0 || !kex->client_version_string) ? (encode_string(def_vers_string, sizeof(def_vers_string)-1)) : (encode_string(kex->client_version_string, strlen(kex->client_version_string))));
+
+			s_audit("session_key_exchange", "count=%i uristring=%s_%s_%s_%s",
+			client_session_id, t4buf, t1buf, t2buf, t3buf);
+
+			free(t1buf);
+			free(t2buf);
+			free(t3buf);
+			free(t4buf);
+			}
+#endif
+		/*
+		 * client starts with ctos = 0 && log flag = 0 and no log.
+		 * 2nd client pass ctos = 1 and flag = 1 so no log.
+		 * server starts with ctos = 1 && log_flag = 0 so log.
+		 * 2nd sever pass ctos = 1 && log flag = 1 so no log.
+		 * -cjr
+		 */
+
+		if (ctos && !log_flag) {
+			logit("SSH: Server;Ltype: Kex;Remote: %s-%d;Enc: %s;MAC: %s;Comp: %s",
+			    ssh_get_remote_ipaddr(ssh),
+			    ssh_get_remote_port(ssh),
+			    newkeys->enc.name,
+			    authlen == 0 ? newkeys->mac.name : "<implicit>",
+			    newkeys->comp.name);
+		}
+		log_flag = 1;
 	}
 	if ((r = choose_kex(kex, cprop[PROPOSAL_KEX_ALGS],
-	    sprop[PROPOSAL_KEX_ALGS])) != 0 ||
-	    (r = choose_hostkeyalg(kex, cprop[PROPOSAL_SERVER_HOST_KEY_ALGS],
-	    sprop[PROPOSAL_SERVER_HOST_KEY_ALGS])) != 0)
+	    sprop[PROPOSAL_KEX_ALGS])) != 0) {
+		kex->failed_choice = peer[PROPOSAL_KEX_ALGS];
+		peer[PROPOSAL_KEX_ALGS] = NULL;
 		goto out;
+	}
+	if ((r = choose_hostkeyalg(kex, cprop[PROPOSAL_SERVER_HOST_KEY_ALGS],
+	    sprop[PROPOSAL_SERVER_HOST_KEY_ALGS])) != 0) {
+		kex->failed_choice = peer[PROPOSAL_SERVER_HOST_KEY_ALGS];
+		peer[PROPOSAL_SERVER_HOST_KEY_ALGS] = NULL;
+		goto out;
+	}
 	need = dh_need = 0;
 	for (mode = 0; mode < MODE_MAX; mode++) {
 		newkeys = kex->newkeys[mode];

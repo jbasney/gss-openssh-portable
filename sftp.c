@@ -1,4 +1,4 @@
-/* $OpenBSD: sftp.c,v 1.170 2015/01/20 23:14:00 deraadt Exp $ */
+/* $OpenBSD: sftp.c,v 1.171 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Copyright (c) 2001-2004 Damien Miller <djm@openbsd.org>
  *
@@ -71,7 +71,7 @@ typedef void EditLine;
 #include "sftp-client.h"
 
 #define DEFAULT_COPY_BUFLEN	32768	/* Size of buffer for up/download */
-#define DEFAULT_NUM_REQUESTS	64	/* # concurrent outstanding requests */
+#define DEFAULT_NUM_REQUESTS	256	/* # concurrent outstanding requests */
 
 /* File to read commands from */
 FILE* infile;
@@ -1958,7 +1958,7 @@ complete(EditLine *el, int ch)
 
 	/* Figure out which argument the cursor points to */
 	cursor = lf->cursor - lf->buffer;
-	line = (char *)xmalloc(cursor + 1);
+	line = xmalloc(cursor + 1);
 	memcpy(line, lf->buffer, cursor);
 	line[cursor] = '\0';
 	argv = makeargv(line, &carg, 1, &quote, &terminated);
@@ -1966,7 +1966,7 @@ complete(EditLine *el, int ch)
 
 	/* Get all the arguments on the line */
 	len = lf->lastchar - lf->buffer;
-	line = (char *)xmalloc(len + 1);
+	line = xmalloc(len + 1);
 	memcpy(line, lf->buffer, len);
 	line[len] = '\0';
 	argv = makeargv(line, &argc, 1, NULL, NULL);
@@ -2237,7 +2237,7 @@ main(int argc, char **argv)
 	char *host = NULL, *userhost, *cp, *file2 = NULL;
 	int debug_level = 0, sshver = 2;
 	char *file1 = NULL, *sftp_server = NULL;
-	char *ssh_program = _PATH_SSH_PROGRAM, *sftp_direct = NULL;
+	char *ssh_program = NULL, *sftp_direct = NULL;
 	const char *errstr;
 	LogLevel ll = SYSLOG_LEVEL_INFO;
 	arglist args;
@@ -2253,6 +2253,8 @@ main(int argc, char **argv)
 	setlocale(LC_CTYPE, "");
 
 	__progname = ssh_get_progname(argv[0]);
+	init_pathnames();
+	ssh_program = _PATH_SSH_PROGRAM;
 	memset(&args, '\0', sizeof(args));
 	args.list = NULL;
 	addargs(&args, "%s", ssh_program);

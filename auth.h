@@ -1,4 +1,4 @@
-/* $OpenBSD: auth.h,v 1.82 2015/02/16 22:13:32 djm Exp $ */
+/* $OpenBSD: auth.h,v 1.84 2015/05/08 06:41:56 djm Exp $ */
 
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -41,6 +41,9 @@
 #ifdef KRB5
 #include <krb5.h>
 #endif
+#ifdef AFS_KRB5
+#include <krbafs.h>
+#endif
 
 struct ssh;
 struct sshkey;
@@ -56,7 +59,7 @@ struct Authctxt {
 	int		 valid;		/* user exists and is allowed to login */
 	int		 attempt;
 	int		 failures;
-	int		 server_caused_failure; 
+	int		 server_caused_failure;
 	int		 force_pwchange;
 	char		*user;		/* username sent by the client */
 	char		*service;
@@ -75,6 +78,9 @@ struct Authctxt {
 	krb5_principal	 krb5_user;
 	char		*krb5_ticket_file;
 	char		*krb5_ccname;
+#endif
+#ifdef SESSION_HOOKS
+        char            *session_env_file;
 #endif
 	Buffer		*loginmsg;
 	void		*methoddata;
@@ -126,7 +132,7 @@ int	 auth_rsa_key_allowed(struct passwd *, BIGNUM *, Key **);
 
 int	 auth_rhosts_rsa_key_allowed(struct passwd *, char *, char *, Key *);
 int	 hostbased_key_allowed(struct passwd *, const char *, char *, Key *);
-int	 user_key_allowed(struct passwd *, Key *);
+int	 user_key_allowed(struct passwd *, Key *, int);
 void	 pubkey_auth_info(Authctxt *, const Key *, const char *, ...)
 	    __attribute__((__format__ (printf, 3, 4)));
 void	 auth2_record_userkey(Authctxt *, struct sshkey *);

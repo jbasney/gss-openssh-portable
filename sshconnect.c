@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect.c,v 1.260 2015/03/24 01:11:12 djm Exp $ */
+/* $OpenBSD: sshconnect.c,v 1.263 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -267,6 +267,31 @@ ssh_kill_proxy_command(void)
 }
 
 /*
+ * Set TCP receive buffer if requested.
+ * Note: tuning needs to happen after the socket is
+ * created but before the connection happens
+ * so winscale is negotiated properly -cjr
+ */
+static void
+ssh_set_socket_recvbuf(int sock)
+{
+	void *buf = (void *)&options.tcp_rcv_buf;
+	int sz = sizeof(options.tcp_rcv_buf);
+	int socksize;
+	int socksizelen = sizeof(int);
+
+	debug("setsockopt Attempting to set SO_RCVBUF to %d", options.tcp_rcv_buf);
+	if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, buf, sz) >= 0) {
+	  getsockopt(sock, SOL_SOCKET, SO_RCVBUF, &socksize, &socksizelen);
+	  debug("setsockopt SO_RCVBUF: %.100s %d", strerror(errno), socksize);
+	}
+	else
+		error("Couldn't set socket receive buffer to %d: %.100s",
+		    options.tcp_rcv_buf, strerror(errno));
+}
+
+
+/*
  * Creates a (possibly privileged) socket for use as the ssh connection.
  */
 static int
@@ -281,6 +306,9 @@ ssh_create_socket(int privileged, struct addrinfo *ai)
 		return -1;
 	}
 	fcntl(sock, F_SETFD, FD_CLOEXEC);
+
+	if (options.tcp_rcv_buf > 0)
+		ssh_set_socket_recvbuf(sock);
 
 	/* Bind the socket to an alternative local IP address */
 	if (options.bind_address == NULL && !privileged)
@@ -356,7 +384,7 @@ timeout_connect(int sockfd, const struct sockaddr *serv_addr,
 		goto done;
 	}
 
-	fdset = (fd_set *)xcalloc(howmany(sockfd + 1, NFDBITS),
+	fdset = xcalloc(howmany(sockfd + 1, NFDBITS),
 	    sizeof(fd_mask));
 	FD_SET(sockfd, fdset);
 	ms_to_timeval(&tv, *timeoutp);
@@ -524,10 +552,10 @@ send_client_banner(int connection_out, int minor1)
 	/* Send our own protocol version identification. */
 	if (compat20) {
 		xasprintf(&client_version_string, "SSH-%d.%d-%.100s\r\n",
-		    PROTOCOL_MAJOR_2, PROTOCOL_MINOR_2, SSH_VERSION);
+		    PROTOCOL_MAJOR_2, PROTOCOL_MINOR_2, SSH_RELEASE);
 	} else {
 		xasprintf(&client_version_string, "SSH-%d.%d-%.100s\n",
-		    PROTOCOL_MAJOR_1, minor1, SSH_VERSION);
+		    PROTOCOL_MAJOR_1, minor1, SSH_RELEASE);
 	}
 	if (roaming_atomicio(vwrite, connection_out, client_version_string,
 	    strlen(client_version_string)) != strlen(client_version_string))
@@ -912,7 +940,7 @@ check_host_key(char *hostname, struct sockaddr *hostaddr, u_short port,
 			    host_key, options.hash_known_hosts))
 				logit("Failed to add the %s host key for IP "
 				    "address '%.128s' to the list of known "
-				    "hosts (%.30s).", type, ip,
+				    "hosts (%.500s).", type, ip,
 				    user_hostfiles[0]);
 			else
 				logit("Warning: Permanently added the %s host "
@@ -1350,6 +1378,7 @@ ssh_login(Sensitive *sensitive, const char *orighost,
 
 	/* key exchange */
 	/* authenticate user */
+	debug("Authenticating to %s:%d as '%s'", host, port, server_user);
 	if (compat20) {
 		ssh_kex2(host, hostaddr, port);
 		ssh_userauth2(local_user, server_user, host, sensitive);

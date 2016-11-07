@@ -1,4 +1,4 @@
-/* $OpenBSD: myproposal.h,v 1.42 2015/03/24 09:17:21 djm Exp $ */
+/* $OpenBSD: myproposal.h,v 1.47 2015/07/10 06:21:53 markus Exp $ */
 
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
@@ -83,27 +83,25 @@
 # else
 #  define KEX_CURVE25519_METHODS ""
 # endif
-#define KEX_SERVER_KEX \
+#define KEX_COMMON_KEX \
 	KEX_CURVE25519_METHODS \
 	KEX_ECDH_METHODS \
-	KEX_SHA256_METHODS \
-	"diffie-hellman-group14-sha1"
+	KEX_SHA256_METHODS
 
-#define KEX_CLIENT_KEX KEX_SERVER_KEX "," \
+#define KEX_SERVER_KEX KEX_COMMON_KEX \
+	"diffie-hellman-group14-sha1" \
+
+#define KEX_CLIENT_KEX KEX_COMMON_KEX \
 	"diffie-hellman-group-exchange-sha1," \
-	"diffie-hellman-group1-sha1"
+	"diffie-hellman-group14-sha1"
 
 #define	KEX_DEFAULT_PK_ALG	\
 	HOSTKEY_ECDSA_CERT_METHODS \
 	"ssh-ed25519-cert-v01@openssh.com," \
 	"ssh-rsa-cert-v01@openssh.com," \
-	"ssh-dss-cert-v01@openssh.com," \
-	"ssh-rsa-cert-v00@openssh.com," \
-	"ssh-dss-cert-v00@openssh.com," \
 	HOSTKEY_ECDSA_METHODS \
 	"ssh-ed25519," \
-	"ssh-rsa," \
-	"ssh-dss"
+	"ssh-rsa" \
 
 /* the actual algorithms */
 
@@ -116,6 +114,9 @@
 	"arcfour256,arcfour128," \
 	"aes128-cbc,3des-cbc,blowfish-cbc,cast128-cbc," \
 	"aes192-cbc,aes256-cbc,arcfour,rijndael-cbc@lysator.liu.se"
+
+#define KEX_ENCRYPT_INCLUDE_NONE KEX_SERVER_ENCRYPT \
+	",none"
 
 #define KEX_SERVER_MAC \
 	"umac-64-etm@openssh.com," \
@@ -148,7 +149,7 @@
 	"ssh-ed25519-cert-v01@openssh.com," \
 	"ssh-ed25519"
 #define	KEX_SERVER_ENCRYPT \
-	"chacha20-poly1305@openssh.com,"
+	"chacha20-poly1305@openssh.com," \
 	"aes128-ctr,aes192-ctr,aes256-ctr"
 #define	KEX_SERVER_MAC \
 	"umac-64-etm@openssh.com," \
@@ -170,6 +171,8 @@
 
 #define	KEX_DEFAULT_COMP	"none,zlib@openssh.com,zlib"
 #define	KEX_DEFAULT_LANG	""
+
+#define KEX_ENCRYPT_INCLUDE_NONE KEX_SERVER_ENCRYPT ",none"
 
 #define KEX_CLIENT \
 	KEX_CLIENT_KEX, \

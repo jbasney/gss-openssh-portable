@@ -1,4 +1,4 @@
-/* $OpenBSD: monitor_wrap.h,v 1.26 2015/02/16 22:13:32 djm Exp $ */
+/* $OpenBSD: monitor_wrap.h,v 1.27 2015/05/01 03:23:51 djm Exp $ */
 
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
@@ -45,8 +45,8 @@ void mm_inform_authserv(char *, char *);
 struct passwd *mm_getpwnamallow(const char *);
 char *mm_auth2_read_banner(void);
 int mm_auth_password(struct Authctxt *, char *);
-int mm_key_allowed(enum mm_keytype, char *, char *, Key *);
-int mm_user_key_allowed(struct passwd *, Key *);
+int mm_key_allowed(enum mm_keytype, char *, char *, Key *, int);
+int mm_user_key_allowed(struct passwd *, Key *, int);
 int mm_hostbased_key_allowed(struct passwd *, char *, char *, Key *);
 int mm_auth_rhosts_rsa_key_allowed(struct passwd *, char *, char *, Key *);
 int mm_key_verify(Key *, u_char *, u_int, u_char *, u_int);
@@ -58,8 +58,14 @@ BIGNUM *mm_auth_rsa_generate_challenge(Key *);
 OM_uint32 mm_ssh_gssapi_server_ctx(Gssctxt **, gss_OID);
 OM_uint32 mm_ssh_gssapi_accept_ctx(Gssctxt *,
    gss_buffer_desc *, gss_buffer_desc *, OM_uint32 *);
-int mm_ssh_gssapi_userok(char *user);
+int mm_ssh_gssapi_userok(char *user, struct passwd *, int gssapi_keyex);
 OM_uint32 mm_ssh_gssapi_checkmic(Gssctxt *, gss_buffer_t, gss_buffer_t);
+OM_uint32 mm_ssh_gssapi_sign(Gssctxt *, gss_buffer_t, gss_buffer_t);
+int mm_ssh_gssapi_localname(char **user);
+OM_uint32 mm_gss_indicate_mechs(OM_uint32 *minor_status,
+				gss_OID_set *mech_set);
+char *mm_ssh_gssapi_last_error(Gssctxt *ctxt, OM_uint32 *maj, OM_uint32 *min);
+int mm_ssh_gssapi_update_creds(ssh_gssapi_ccache *);
 #endif
 
 #ifdef USE_PAM

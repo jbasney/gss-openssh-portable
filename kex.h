@@ -1,4 +1,4 @@
-/* $OpenBSD: kex.h,v 1.71 2015/02/16 22:13:32 djm Exp $ */
+/* $OpenBSD: kex.h,v 1.73 2015/07/30 00:01:34 djm Exp $ */
 
 /*
  * Copyright (c) 2000, 2001 Markus Friedl.  All rights reserved.
@@ -92,6 +92,9 @@ enum kex_exchange {
 	KEX_DH_GEX_SHA1,
 	KEX_DH_GEX_SHA256,
 	KEX_ECDH_SHA2,
+	KEX_GSS_GRP1_SHA1,
+	KEX_GSS_GRP14_SHA1,
+	KEX_GSS_GEX_SHA1,
 	KEX_C25519_SHA256,
 	KEX_MAX
 };
@@ -137,10 +140,17 @@ struct kex {
 	struct sshbuf *peer;
 	sig_atomic_t done;
 	u_int	flags;
+#ifdef GSSAPI
+	int	gss_deleg_creds;
+	int	gss_trust_dns;
+	char    *gss_host;
+	char	*gss_client;
+#endif
 	int	hash_alg;
 	int	ec_nid;
 	char	*client_version_string;
 	char	*server_version_string;
+	char	*failed_choice;
 	int	(*verify_host_key)(struct sshkey *, struct ssh *);
 	struct sshkey *(*load_host_public_key)(int, int, struct ssh *);
 	struct sshkey *(*load_host_private_key)(int, int, struct ssh *);
@@ -159,6 +169,8 @@ struct kex {
 
 int	 kex_names_valid(const char *);
 char	*kex_alg_list(char);
+char	*kex_names_cat(const char *, const char *);
+int	 kex_assemble_names(const char *, char **);
 
 int	 kex_new(struct ssh *, char *[PROPOSAL_MAX], struct kex **);
 int	 kex_setup(struct ssh *, char *[PROPOSAL_MAX]);
@@ -183,6 +195,11 @@ int	 kexecdh_client(struct ssh *);
 int	 kexecdh_server(struct ssh *);
 int	 kexc25519_client(struct ssh *);
 int	 kexc25519_server(struct ssh *);
+
+#ifdef GSSAPI
+int	kexgss_client(struct ssh *);
+int	kexgss_server(struct ssh *);
+#endif
 
 int	 kex_dh_hash(const char *, const char *,
     const u_char *, size_t, const u_char *, size_t, const u_char *, size_t,

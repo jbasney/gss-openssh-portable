@@ -1,4 +1,4 @@
-/* $OpenBSD: monitor_wrap.c,v 1.84 2015/02/16 22:13:32 djm Exp $ */
+/* $OpenBSD: monitor_wrap.c,v 1.85 2015/05/01 03:23:51 djm Exp $ */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * Copyright 2002 Markus Friedl <markus@openbsd.org>
@@ -371,16 +371,17 @@ mm_auth_password(Authctxt *authctxt, char *password)
 }
 
 int
-mm_user_key_allowed(struct passwd *pw, Key *key)
+mm_user_key_allowed(struct passwd *pw, Key *key, int pubkey_auth_attempt)
 {
-	return (mm_key_allowed(MM_USERKEY, NULL, NULL, key));
+	return (mm_key_allowed(MM_USERKEY, NULL, NULL, key,
+	    pubkey_auth_attempt));
 }
 
 int
 mm_hostbased_key_allowed(struct passwd *pw, char *user, char *host,
     Key *key)
 {
-	return (mm_key_allowed(MM_HOSTKEY, user, host, key));
+	return (mm_key_allowed(MM_HOSTKEY, user, host, key, 0));
 }
 
 int
@@ -390,13 +391,14 @@ mm_auth_rhosts_rsa_key_allowed(struct passwd *pw, char *user,
 	int ret;
 
 	key->type = KEY_RSA; /* XXX hack for key_to_blob */
-	ret = mm_key_allowed(MM_RSAHOSTKEY, user, host, key);
+	ret = mm_key_allowed(MM_RSAHOSTKEY, user, host, key, 0);
 	key->type = KEY_RSA1;
 	return (ret);
 }
 
 int
-mm_key_allowed(enum mm_keytype type, char *user, char *host, Key *key)
+mm_key_allowed(enum mm_keytype type, char *user, char *host, Key *key,
+    int pubkey_auth_attempt)
 {
 	Buffer m;
 	u_char *blob;
@@ -414,6 +416,7 @@ mm_key_allowed(enum mm_keytype type, char *user, char *host, Key *key)
 	buffer_put_cstring(&m, user ? user : "");
 	buffer_put_cstring(&m, host ? host : "");
 	buffer_put_string(&m, blob, len);
+	buffer_put_int(&m, pubkey_auth_attempt);
 	free(blob);
 
 	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_KEYALLOWED, &m);
@@ -611,7 +614,6 @@ mm_sshpam_init_ctx(Authctxt *authctxt)
 
 	debug3("%s", __func__);
 	buffer_init(&m);
-	buffer_put_cstring(&m, authctxt->user);
 	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_PAM_INIT_CTX, &m);
 	debug3("%s: waiting for MONITOR_ANS_PAM_INIT_CTX", __func__);
 	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_PAM_INIT_CTX, &m);
@@ -1066,12 +1068,13 @@ mm_ssh_gssapi_checkmic(Gssctxt *ctx, gss_buffer_t gssbuf, gss_buffer_t gssmic)
 }
 
 int
-mm_ssh_gssapi_userok(char *user)
+mm_ssh_gssapi_userok(char *user, struct passwd *pw, int gssapi_keyex)
 {
 	Buffer m;
 	int authenticated = 0;
 
 	buffer_init(&m);
+	buffer_put_int(&m, gssapi_keyex);
 
 	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSUSEROK, &m);
 	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSUSEROK,
@@ -1083,5 +1086,127 @@ mm_ssh_gssapi_userok(char *user)
 	debug3("%s: user %sauthenticated",__func__, authenticated ? "" : "not ");
 	return (authenticated);
 }
+
+char *
+mm_ssh_gssapi_last_error(Gssctxt *ctx, OM_uint32 *major, OM_uint32 *minor) {
+	Buffer m;
+	OM_uint32 maj,min;
+	char *errstr;
+	
+	buffer_init(&m);
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSERR, &m);
+	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSERR, &m);
+
+	maj = buffer_get_int(&m);
+	min = buffer_get_int(&m);
+
+	if (major) *major=maj;
+	if (minor) *minor=min;
+	
+	errstr=buffer_get_string(&m,NULL);
+
+	buffer_free(&m);
+	
+	return(errstr);
+}	
+
+OM_uint32
+mm_gss_indicate_mechs(OM_uint32 *minor_status, gss_OID_set *mech_set)
+{
+        Buffer m;
+	OM_uint32 major,minor;
+	int count;
+	gss_OID_desc oid;
+        u_int length;
+
+	buffer_init(&m);
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSMECHS, &m);
+        mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSMECHS,
+				  &m);
+        major=buffer_get_int(&m);
+	count=buffer_get_int(&m);
+	
+        gss_create_empty_oid_set(&minor,mech_set);
+	while(count-->0) {
+	    oid.elements=buffer_get_string(&m,&length);
+	    oid.length=length;
+	    gss_add_oid_set_member(&minor,&oid,mech_set);
+	}
+
+	buffer_free(&m);
+	
+        return(major);
+}
+
+int
+mm_ssh_gssapi_localname(char **lname)
+{
+        Buffer m;
+
+	buffer_init(&m);
+        mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSLOCALNAME, &m);
+
+        debug3("%s: waiting for MONITOR_ANS_GSSLOCALNAME", __func__);
+        mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSLOCALNAME,
+                                  &m);
+
+	*lname = buffer_get_string(&m, NULL);
+
+        buffer_free(&m);
+	if (lname[0] == '\0') {
+	    debug3("%s: gssapi identity mapping failed", __func__);
+	} else {
+	    debug3("%s: gssapi identity mapped to %s", __func__, *lname);
+	}
+	
+        return(0);
+}	
+
+OM_uint32
+mm_ssh_gssapi_sign(Gssctxt *ctx, gss_buffer_desc *data, gss_buffer_desc *hash)
+{
+	Buffer m;
+	OM_uint32 major;
+	u_int len;
+
+	buffer_init(&m);
+	buffer_put_string(&m, data->value, data->length);
+
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSSIGN, &m);
+	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSSIGN, &m);
+
+	major = buffer_get_int(&m);
+	hash->value = buffer_get_string(&m, &len);
+	hash->length = len;
+
+	buffer_free(&m);
+
+	return(major);
+}
+
+int
+mm_ssh_gssapi_update_creds(ssh_gssapi_ccache *store)
+{
+	Buffer m;
+	int ok;
+
+	buffer_init(&m);
+
+	buffer_put_cstring(&m, store->filename ? store->filename : "");
+	buffer_put_cstring(&m, store->envvar ? store->envvar : "");
+	buffer_put_cstring(&m, store->envval ? store->envval : "");
+	
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_GSSUPCREDS, &m);
+	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_GSSUPCREDS, &m);
+
+	ok = buffer_get_int(&m);
+
+	buffer_free(&m);
+	
+	return (ok);
+}
+
 #endif /* GSSAPI */
 

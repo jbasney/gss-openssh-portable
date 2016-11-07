@@ -1,4 +1,4 @@
-/* $OpenBSD: servconf.h,v 1.116 2015/01/13 07:39:19 djm Exp $ */
+/* $OpenBSD: servconf.h,v 1.120 2015/07/10 06:21:53 markus Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -58,7 +58,9 @@ typedef struct {
 	u_int	num_ports;
 	u_int	ports_from_cmdline;
 	int	ports[MAX_PORTS];	/* Port number to listen on. */
-	char   *listen_addr;		/* Address on which the server listens. */
+	u_int	num_queued_listens;
+	char   **queued_listen_addrs;
+	int    *queued_listen_ports;
 	struct addrinfo *listen_addrs;	/* Addresses on which the server listens. */
 	int     address_family;		/* Address family used by the server. */
 	char   *host_key_files[MAX_HOSTKEYS];	/* Files containing host keys. */
@@ -100,6 +102,7 @@ typedef struct {
 	int     hostbased_authentication;	/* If true, permit ssh2 hostbased auth */
 	int     hostbased_uses_name_from_packet_only; /* experimental */
 	char   *hostbased_key_types;	/* Key types allowed for hostbased */
+	char   *hostkeyalgorithms;	/* SSH2 server key types */
 	int     rsa_authentication;	/* If true, permit RSA authentication. */
 	int     pubkey_authentication;	/* If true, permit ssh2 pubkey authentication. */
 	char   *pubkey_key_types;	/* Key types allowed for public key */
@@ -112,10 +115,21 @@ typedef struct {
 						 * /etc/passwd */
 	int     kerberos_ticket_cleanup;	/* If true, destroy ticket
 						 * file on logout. */
+#ifdef SESSION_HOOKS
+        int     session_hooks_allow;        /* If true, permit user hooks */
+        char*   session_hooks_startup_cmd;  /* cmd to be executed before */
+        char*   session_hooks_shutdown_cmd; /* cmd to be executed after */
+#endif
 	int     kerberos_get_afs_token;		/* If true, try to get AFS token if
 						 * authenticated with Kerberos. */
+	int     gsi_allow_limited_proxy;	/* If true, accept limited proxies */
 	int     gss_authentication;	/* If true, permit GSSAPI authentication */
+	int     gss_deleg_creds;	/* If true, store delegated GSSAPI credentials*/
+	int     gss_keyex;		/* If true, permit GSSAPI key exchange */
 	int     gss_cleanup_creds;	/* If true, destroy cred cache on logout */
+	char*   gss_creds_path;	/* If true, destroy cred cache on logout */
+	int     gss_strict_acceptor;	/* If true, restrict the GSSAPI acceptor name */
+	int 	gss_store_rekey;
 	int     password_authentication;	/* If true, permit password
 						 * authentication. */
 	int     kbd_interactive_authentication;	/* If true, permit */
@@ -168,17 +182,31 @@ typedef struct {
 	char   *adm_forced_command;
 
 	int	use_pam;		/* Enable auth via PAM */
+        int     tcp_rcv_buf_poll;       /* poll tcp rcv window in autotuning kernels*/
+ 	int	permit_pam_user_change;	/* Allow PAM to change user name */
+	int	hpn_disabled;		/* disable hpn functionality. false by default */
+	int	hpn_buffer_size;	/* set the hpn buffer size - default 3MB */
+
+	int	none_enabled;		/* Enable NONE cipher switch */
+
+	int	audit_disabled;		/* disable SSHD instrumentation */
 
 	int	permit_tun;
 
 	int	num_permitted_opens;
 
 	char   *chroot_directory;
+
+	int    disable_usage_stats;
+	char   *usage_stats_targets;
+
 	char   *revoked_keys_file;
 	char   *trusted_user_ca_keys;
-	char   *authorized_principals_file;
 	char   *authorized_keys_command;
 	char   *authorized_keys_command_user;
+	char   *authorized_principals_file;
+	char   *authorized_principals_command;
+	char   *authorized_principals_command_user;
 
 	int64_t rekey_limit;
 	int	rekey_interval;
@@ -214,9 +242,11 @@ struct connection_info {
 		M_CP_STROPT(banner); \
 		M_CP_STROPT(trusted_user_ca_keys); \
 		M_CP_STROPT(revoked_keys_file); \
-		M_CP_STROPT(authorized_principals_file); \
 		M_CP_STROPT(authorized_keys_command); \
 		M_CP_STROPT(authorized_keys_command_user); \
+		M_CP_STROPT(authorized_principals_file); \
+		M_CP_STROPT(authorized_principals_command); \
+		M_CP_STROPT(authorized_principals_command_user); \
 		M_CP_STROPT(hostbased_key_types); \
 		M_CP_STROPT(pubkey_key_types); \
 		M_CP_STRARRAYOPT(authorized_keys_files, num_authkeys_files); \

@@ -1,4 +1,4 @@
-/* $OpenBSD: clientloop.c,v 1.272 2015/02/25 19:54:02 djm Exp $ */
+/* $OpenBSD: clientloop.c,v 1.275 2015/07/10 06:21:53 markus Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -100,6 +100,7 @@
 #include "key.h"
 #include "cipher.h"
 #include "kex.h"
+#include "myproposal.h"
 #include "log.h"
 #include "misc.h"
 #include "readconf.h"
@@ -113,6 +114,10 @@
 #include "roaming.h"
 #include "ssherr.h"
 #include "hostfile.h"
+
+#ifdef GSSAPI
+#include "ssh-gss.h"
+#endif
 
 /* import options */
 extern Options options;
@@ -163,7 +168,7 @@ static int connection_in;	/* Connection to server (input). */
 static int connection_out;	/* Connection to server (output). */
 static int need_rekeying;	/* Set to non-zero if rekeying is requested. */
 static int session_closed;	/* In SSH2: login session closed. */
-static int x11_refuse_time;	/* If >0, refuse x11 opens after this time. */
+static u_int x11_refuse_time;	/* If >0, refuse x11 opens after this time. */
 
 static void client_init_dispatch(void);
 int	session_ident = -1;
@@ -298,7 +303,8 @@ client_x11_display_valid(const char *display)
 	return 1;
 }
 
-#define SSH_X11_PROTO "MIT-MAGIC-COOKIE-1"
+#define SSH_X11_PROTO		"MIT-MAGIC-COOKIE-1"
+#define X11_TIMEOUT_SLACK	60
 void
 client_x11_get_proto(const char *display, const char *xauth_path,
     u_int trusted, u_int timeout, char **_proto, char **_data)
@@ -311,7 +317,7 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 	int got_data = 0, generated = 0, do_unlink = 0, i;
 	char *xauthdir, *xauthfile;
 	struct stat st;
-	u_int now;
+	u_int now, x11_timeout_real;
 
 	xauthdir = xauthfile = NULL;
 	*_proto = proto;
@@ -344,6 +350,15 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 			xauthdir = xmalloc(PATH_MAX);
 			xauthfile = xmalloc(PATH_MAX);
 			mktemp_proto(xauthdir, PATH_MAX);
+			/*
+			 * The authentication cookie should briefly outlive
+			 * ssh's willingness to forward X11 connections to
+			 * avoid nasty fail-open behaviour in the X server.
+			 */
+			if (timeout >= UINT_MAX - X11_TIMEOUT_SLACK)
+				x11_timeout_real = UINT_MAX;
+			else
+				x11_timeout_real = timeout + X11_TIMEOUT_SLACK;
 			if (mkdtemp(xauthdir) != NULL) {
 				do_unlink = 1;
 				snprintf(xauthfile, PATH_MAX, "%s/xauthfile",
@@ -351,17 +366,20 @@ client_x11_get_proto(const char *display, const char *xauth_path,
 				snprintf(cmd, sizeof(cmd),
 				    "%s -f %s generate %s " SSH_X11_PROTO
 				    " untrusted timeout %u 2>" _PATH_DEVNULL,
-				    xauth_path, xauthfile, display, timeout);
+				    xauth_path, xauthfile, display,
+				    x11_timeout_real);
 				debug2("x11_get_proto: %s", cmd);
-				if (system(cmd) == 0)
-					generated = 1;
 				if (x11_refuse_time == 0) {
 					now = monotime() + 1;
 					if (UINT_MAX - timeout < now)
 						x11_refuse_time = UINT_MAX;
 					else
 						x11_refuse_time = now + timeout;
+					channel_set_x11_refuse_time(
+					    x11_refuse_time);
 				}
+				if (system(cmd) == 0)
+					generated = 1;
 			}
 		}
 
@@ -1596,6 +1614,15 @@ client_loop(int have_pty, int escape_char_arg, int ssh2_chan_id)
 		/* Do channel operations unless rekeying in progress. */
 		if (!rekeying) {
 			channel_after_select(readset, writeset);
+
+#ifdef GSSAPI
+			if (options.gss_renewal_rekey &&
+			    ssh_gssapi_credentials_updated((Gssctxt *)GSS_C_NO_CONTEXT)) {
+				debug("credentials updated - forcing rekey");
+				need_rekeying = 1;
+			}
+#endif
+
 			if (need_rekeying || packet_need_rekeying()) {
 				debug("need rekeying");
 				active_state->kex->done = 0;
@@ -1889,7 +1916,7 @@ client_request_x11(const char *request_type, int rchan)
 		    "malicious server.");
 		return NULL;
 	}
-	if (x11_refuse_time != 0 && monotime() >= x11_refuse_time) {
+	if (x11_refuse_time != 0 && (u_int)monotime() >= x11_refuse_time) {
 		verbose("Rejected X11 connection after ForwardX11Timeout "
 		    "expired");
 		return NULL;
@@ -1909,9 +1936,15 @@ client_request_x11(const char *request_type, int rchan)
 	sock = x11_connect_display();
 	if (sock < 0)
 		return NULL;
+	/* again is this really necessary for X11? */
+	if (options.hpn_disabled)
 	c = channel_new("x11",
 	    SSH_CHANNEL_X11_OPEN, sock, sock, -1,
 	    CHAN_TCP_WINDOW_DEFAULT, CHAN_X11_PACKET_DEFAULT, 0, "x11", 1);
+	else
+		c = channel_new("x11",
+		    SSH_CHANNEL_X11_OPEN, sock, sock, -1,
+		    options.hpn_buffer_size, CHAN_X11_PACKET_DEFAULT, 0, "x11", 1);
 	c->force_drain = 1;
 	return c;
 }
@@ -1934,9 +1967,15 @@ client_request_agent(const char *request_type, int rchan)
 			    __func__, ssh_err(r));
 		return NULL;
 	}
+	if (options.hpn_disabled)
 	c = channel_new("authentication agent connection",
 	    SSH_CHANNEL_OPEN, sock, sock, -1,
-	    CHAN_X11_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0,
+		    CHAN_X11_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0,
+		    "authentication agent connection", 1);
+	else
+	c = channel_new("authentication agent connection",
+	    SSH_CHANNEL_OPEN, sock, sock, -1,
+	    options.hpn_buffer_size, CHAN_TCP_PACKET_DEFAULT, 0,
 	    "authentication agent connection", 1);
 	c->force_drain = 1;
 	return c;
@@ -1964,9 +2003,17 @@ client_request_tun_fwd(int tun_mode, int local_tun, int remote_tun)
 		return -1;
 	}
 
+	if(options.hpn_disabled)
 	c = channel_new("tun", SSH_CHANNEL_OPENING, fd, fd, -1,
-	    CHAN_TCP_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT, 0, "tun", 1);
+				CHAN_TCP_WINDOW_DEFAULT, CHAN_TCP_PACKET_DEFAULT,
+				0, "tun", 1);
+	else
+	c = channel_new("tun", SSH_CHANNEL_OPENING, fd, fd, -1,
+				options.hpn_buffer_size, CHAN_TCP_PACKET_DEFAULT,
+				0, "tun", 1);
 	c->datagram = 1;
+
+
 
 #if defined(SSH_TUN_FILTER)
 	if (options.tun_open == SSH_TUNMODE_POINTOPOINT)
@@ -2349,11 +2396,11 @@ client_input_hostkeys(void)
 		debug3("%s: received %s key %s", __func__,
 		    sshkey_type(key), fp);
 		free(fp);
+
 		/* Check that the key is accepted in HostkeyAlgorithms */
-		if (options.hostkeyalgorithms != NULL &&
-		    match_pattern_list(sshkey_ssh_name(key),
-		    options.hostkeyalgorithms,
-		    strlen(options.hostkeyalgorithms), 0) != 1) {
+		if (match_pattern_list(sshkey_ssh_name(key),
+		    options.hostkeyalgorithms ? options.hostkeyalgorithms :
+		    KEX_DEFAULT_PK_ALG, 0) != 1) {
 			debug3("%s: %s key not permitted by HostkeyAlgorithms",
 			    __func__, sshkey_ssh_name(key));
 			continue;

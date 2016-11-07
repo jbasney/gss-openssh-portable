@@ -1,4 +1,4 @@
-/* $OpenBSD: scp.c,v 1.181 2015/01/16 06:40:12 deraadt Exp $ */
+/* $OpenBSD: scp.c,v 1.182 2015/04/24 01:36:00 deraadt Exp $ */
 /*
  * scp - secure remote copy.  This is basically patched BSD rcp which
  * uses ssh to do the data transfer (instead of using rcmd).
@@ -146,7 +146,7 @@ int showprogress = 1;
 int throughlocal = 0;
 
 /* This is the program to execute for the secured connection. ("ssh" or -S) */
-char *ssh_program = _PATH_SSH_PROGRAM;
+char *ssh_program;
 
 /* This is used to store the pid of ssh_program */
 pid_t do_cmd_pid = -1;
@@ -385,6 +385,8 @@ main(int argc, char **argv)
 	argv = newargv;
 
 	__progname = ssh_get_progname(argv[0]);
+	init_pathnames();
+	ssh_program = _PATH_SSH_PROGRAM;
 
 	memset(&args, '\0', sizeof(args));
 	memset(&remote_remote_args, '\0', sizeof(remote_remote_args));
@@ -505,8 +507,8 @@ main(int argc, char **argv)
 
 	remin = remout = -1;
 	do_cmd_pid = -1;
-	/* Command to be executed on remote system using "ssh". */
-	(void) snprintf(cmd, sizeof cmd, "scp%s%s%s%s",
+	/* Command to be executed on remote system using "gsissh". */
+	(void) snprintf(cmd, sizeof cmd, "gsiscp%s%s%s%s",
 	    verbose_mode ? " -v" : "",
 	    iamrecursive ? " -r" : "", pflag ? " -p" : "",
 	    targetshouldbedirectory ? " -d" : "");
@@ -750,7 +752,7 @@ source(int argc, char **argv)
 	off_t i, statbytes;
 	size_t amt, nr;
 	int fd = -1, haderr, indx;
-	char *last, *name, buf[2048], encname[PATH_MAX];
+	char *last, *name, buf[16384], encname[PATH_MAX];
 	int len;
 
 	for (indx = 0; indx < argc; ++indx) {
@@ -919,7 +921,7 @@ sink(int argc, char **argv)
 	off_t size, statbytes;
 	unsigned long long ull;
 	int setimes, targisdir, wrerrno = 0;
-	char ch, *cp, *np, *targ, *why, *vect[1], buf[2048];
+	char ch, *cp, *np, *targ, *why, *vect[1], buf[16384];
 	struct timeval tv[2];
 
 #define	atime	tv[0]
@@ -1236,7 +1238,7 @@ void
 usage(void)
 {
 	(void) fprintf(stderr,
-	    "usage: scp [-12346BCpqrv] [-c cipher] [-F ssh_config] [-i identity_file]\n"
+	    "usage: gsiscp [-12346BCpqrv] [-c cipher] [-F ssh_config] [-i identity_file]\n"
 	    "           [-l limit] [-o ssh_option] [-P port] [-S program]\n"
 	    "           [[user@]host1:]file1 ... [[user@]host2:]file2\n");
 	exit(1);
@@ -1333,7 +1335,7 @@ allocbuf(BUF *bp, int fd, int blksize)
 	if (bp->buf == NULL)
 		bp->buf = xmalloc(size);
 	else
-		bp->buf = xrealloc(bp->buf, 1, size);
+		bp->buf = xreallocarray(bp->buf, 1, size);
 	memset(bp->buf, 0, size);
 	bp->cnt = size;
 	return (bp);

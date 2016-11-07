@@ -1,4 +1,4 @@
-/* $OpenBSD: ssh.c,v 1.416 2015/03/03 06:48:58 djm Exp $ */
+/* $OpenBSD: ssh.c,v 1.420 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -108,6 +108,7 @@
 #include "roaming.h"
 #include "version.h"
 #include "ssherr.h"
+#include "myproposal.h"
 
 #ifdef ENABLE_PKCS11
 #include "ssh-pkcs11.h"
@@ -203,10 +204,10 @@ usage(void)
 "usage: ssh [-1246AaCfGgKkMNnqsTtVvXxYy] [-b bind_address] [-c cipher_spec]\n"
 "           [-D [bind_address:]port] [-E log_file] [-e escape_char]\n"
 "           [-F configfile] [-I pkcs11] [-i identity_file]\n"
-"           [-L [bind_address:]port:host:hostport] [-l login_name] [-m mac_spec]\n"
+"           [-L address] [-l login_name] [-m mac_spec]\n"
 "           [-O ctl_cmd] [-o option] [-p port]\n"
 "           [-Q cipher | cipher-auth | mac | kex | key]\n"
-"           [-R [bind_address:]port:host:hostport] [-S ctl_path] [-W host:port]\n"
+"           [-R address] [-S ctl_path] [-W host:port]\n"
 "           [-w local_tun[:remote_tun]] [user@]hostname [command]\n"
 	);
 	exit(255);
@@ -356,10 +357,8 @@ check_follow_cname(char **namep, const char *cname)
 	debug3("%s: check \"%s\" CNAME \"%s\"", __func__, *namep, cname);
 	for (i = 0; i < options.num_permitted_cnames; i++) {
 		rule = options.permitted_cnames + i;
-		if (match_pattern_list(*namep, rule->source_list,
-		    strlen(rule->source_list), 1) != 1 ||
-		    match_pattern_list(cname, rule->target_list,
-		    strlen(rule->target_list), 1) != 1)
+		if (match_pattern_list(*namep, rule->source_list, 1) != 1 ||
+		    match_pattern_list(cname, rule->target_list, 1) != 1)
 			continue;
 		verbose("Canonicalized DNS aliased hostname "
 		    "\"%s\" => \"%s\"", *namep, cname);
@@ -464,6 +463,32 @@ process_config_files(const char *host_arg, struct passwd *pw, int post_canon)
 			fatal("Can't open user config file %.100s: "
 			    "%.100s", config, strerror(errno));
 	} else {
+	    /*
+	     * Since the config file parsing code aborts if it sees
+	     * options it doesn't recognize, allow users to put
+	     * options specific to compile-time add-ons in alternate
+	     * config files so their primary config file will
+	     * interoperate SSH versions that don't support those
+	     * options.
+	     */
+#ifdef GSSAPI
+		r = snprintf(buf, sizeof buf, "%s/%s.gssapi", pw->pw_dir,
+		    _PATH_SSH_USER_CONFFILE);
+		if (r > 0 && (size_t)r < sizeof(buf))
+			(void)read_config_file(buf, pw, host, host_arg, &options, 1);
+#ifdef GSI
+		r = snprintf(buf, sizeof buf, "%s/%s.gsi", pw->pw_dir,
+		    _PATH_SSH_USER_CONFFILE);
+		if (r > 0 && (size_t)r < sizeof(buf))
+			(void)read_config_file(buf, pw, host, host_arg, &options, 1);
+#endif
+#if defined(KRB5)
+		r = snprintf(buf, sizeof buf, "%s/%s.krb", pw->pw_dir,
+		    _PATH_SSH_USER_CONFFILE);
+		if (r > 0 && (size_t)r < sizeof(buf))
+			(void)read_config_file(buf, pw, host, host_arg, &options, 1);
+#endif
+#endif
 		r = snprintf(buf, sizeof buf, "%s/%s", pw->pw_dir,
 		    _PATH_SSH_USER_CONFFILE);
 		if (r > 0 && (size_t)r < sizeof(buf))
@@ -523,6 +548,7 @@ main(int ac, char **av)
 	sanitise_stdfd();
 
 	__progname = ssh_get_progname(av[0]);
+	init_pathnames();
 
 #ifndef HAVE_SETPROCTITLE
 	/* Prepare for later setproctitle emulation */
@@ -796,26 +822,26 @@ main(int ac, char **av)
 			}
 			break;
 		case 'c':
-			if (ciphers_valid(optarg)) {
+			if (ciphers_valid(*optarg == '+' ?
+			    optarg + 1 : optarg)) {
 				/* SSH2 only */
 				options.ciphers = xstrdup(optarg);
 				options.cipher = SSH_CIPHER_INVALID;
-			} else {
-				/* SSH1 only */
-				options.cipher = cipher_number(optarg);
-				if (options.cipher == -1) {
-					fprintf(stderr,
-					    "Unknown cipher type '%s'\n",
-					    optarg);
-					exit(255);
-				}
-				if (options.cipher == SSH_CIPHER_3DES)
-					options.ciphers = "3des-cbc";
-				else if (options.cipher == SSH_CIPHER_BLOWFISH)
-					options.ciphers = "blowfish-cbc";
-				else
-					options.ciphers = (char *)-1;
+				break;
 			}
+			/* SSH1 only */
+			options.cipher = cipher_number(optarg);
+			if (options.cipher == -1) {
+				fprintf(stderr, "Unknown cipher type '%s'\n",
+				    optarg);
+				exit(255);
+			}
+			if (options.cipher == SSH_CIPHER_3DES)
+				options.ciphers = xstrdup("3des-cbc");
+			else if (options.cipher == SSH_CIPHER_BLOWFISH)
+				options.ciphers = xstrdup("blowfish-cbc");
+			else
+				options.ciphers = xstrdup(KEX_CLIENT_ENCRYPT);
 			break;
 		case 'm':
 			if (mac_valid(optarg))
@@ -885,6 +911,10 @@ main(int ac, char **av)
 			break;
 		case 'T':
 			options.request_tty = REQUEST_TTY_NO;
+			/* ensure that the user doesn't try to backdoor a */
+			/* null cipher switch on an interactive session */
+			/* so explicitly disable it no matter what */
+			options.none_switch=0;
 			break;
 		case 'o':
 			line = xstrdup(optarg);
@@ -1115,8 +1145,11 @@ main(int ac, char **av)
 
 	seed_rng();
 
-	if (options.user == NULL)
+	if (options.user == NULL) {
 		options.user = xstrdup(pw->pw_name);
+		options.implicit = 1;
+	}
+        else options.implicit = 0;
 
 	if (gethostname(thishost, sizeof(thishost)) == -1)
 		fatal("gethostname: %s", strerror(errno));
@@ -1412,6 +1445,8 @@ control_persist_detach(void)
 	setproctitle("%s [mux]", options.control_path);
 }
 
+extern const EVP_CIPHER *evp_aes_ctr_mt(void);
+
 /* Do fork() after authentication. Used by "ssh -f" */
 static void
 fork_postauth(void)
@@ -1673,6 +1708,8 @@ ssh_session(void)
 	}
 	/* Request X11 forwarding if enabled and DISPLAY is set. */
 	display = getenv("DISPLAY");
+	if (display == NULL && options.forward_x11)
+		debug("X11 forwarding requested but DISPLAY not set");
 	if (options.forward_x11 && display != NULL) {
 		char *proto, *data;
 		/* Get reasonable local authentication information. */
@@ -1774,6 +1811,8 @@ ssh_session2_setup(int id, int success, void *arg)
 		return; /* No need for error message, channels code sens one */
 
 	display = getenv("DISPLAY");
+	if (display == NULL && options.forward_x11)
+		debug("X11 forwarding requested but DISPLAY not set");
 	if (options.forward_x11 && display != NULL) {
 		char *proto, *data;
 		/* Get reasonable local authentication information. */
@@ -1805,6 +1844,78 @@ ssh_session2_setup(int id, int success, void *arg)
 	    NULL, fileno(stdin), &command, environ);
 }
 
+static void
+hpn_options_init(void)
+{
+	/*
+	 * We need to check to see if what they want to do about buffer
+	 * sizes here. In a hpn to nonhpn connection we want to limit
+	 * the window size to something reasonable in case the far side
+	 * has the large window bug. In hpn to hpn connection we want to
+	 * use the max window size but allow the user to override it
+	 * lastly if they disabled hpn then use the ssh std window size.
+	 *
+	 * So why don't we just do a getsockopt() here and set the
+	 * ssh window to that? In the case of a autotuning receive
+	 * window the window would get stuck at the initial buffer
+	 * size generally less than 96k. Therefore we need to set the
+	 * maximum ssh window size to the maximum hpn buffer size
+	 * unless the user has specifically set the tcprcvbufpoll
+	 * to no. In which case we *can* just set the window to the
+	 * minimum of the hpn buffer size and tcp receive buffer size.
+	 */
+
+	if (tty_flag)
+		options.hpn_buffer_size = CHAN_SES_WINDOW_DEFAULT;
+	else
+		options.hpn_buffer_size = 2 * 1024 * 1024;
+
+	if (datafellows & SSH_BUG_LARGEWINDOW) {
+		debug("HPN to Non-HPN Connection");
+	} else {
+		int sock, socksize;
+		socklen_t socksizelen;
+		if (options.tcp_rcv_buf_poll <= 0) {
+			sock = socket(AF_INET, SOCK_STREAM, 0);
+			socksizelen = sizeof(socksize);
+			getsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+				   &socksize, &socksizelen);
+			close(sock);
+			debug("socksize %d", socksize);
+			options.hpn_buffer_size = socksize;
+			debug("HPNBufferSize set to TCP RWIN: %d", options.hpn_buffer_size);
+		} else {
+			if (options.tcp_rcv_buf > 0) {
+				/*
+				 * Create a socket but don't connect it:
+				 * we use that the get the rcv socket size
+				 */
+				sock = socket(AF_INET, SOCK_STREAM, 0);
+				/*
+				 * If they are using the tcp_rcv_buf option,
+				 * attempt to set the buffer size to that.
+				 */
+				if (options.tcp_rcv_buf) {
+					socksizelen = sizeof(options.tcp_rcv_buf);
+					setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+						   &options.tcp_rcv_buf, socksizelen);
+				}
+				socksizelen = sizeof(socksize);
+				getsockopt(sock, SOL_SOCKET, SO_RCVBUF,
+					   &socksize, &socksizelen);
+				close(sock);
+				debug("socksize %d", socksize);
+				options.hpn_buffer_size = socksize;
+				debug("HPNBufferSize set to user TCPRcvBuf: %d", options.hpn_buffer_size);
+			}
+		}
+	}
+
+	debug("Final hpn_buffer_size = %d", options.hpn_buffer_size);
+
+	channel_set_hpn(options.hpn_disabled, options.hpn_buffer_size);
+}
+
 /* open new channel for a session */
 static int
 ssh_session2_open(void)
@@ -1831,9 +1942,11 @@ ssh_session2_open(void)
 	if (!isatty(err))
 		set_nonblock(err);
 
-	window = CHAN_SES_WINDOW_DEFAULT;
+	window = options.hpn_buffer_size;
+
 	packetmax = CHAN_SES_PACKET_DEFAULT;
 	if (tty_flag) {
+		window = CHAN_SES_WINDOW_DEFAULT;
 		window >>= 1;
 		packetmax >>= 1;
 	}
@@ -1842,6 +1955,10 @@ ssh_session2_open(void)
 	    window, packetmax, CHAN_EXTENDED_WRITE,
 	    "client-session", /*nonblock*/0);
 
+	if ((options.tcp_rcv_buf_poll > 0) && (!options.hpn_disabled)) {
+		c->dynamic_window = 1;
+		debug("Enabled Dynamic Window Scaling");
+	}
 	debug3("ssh_session2_open: channel_new: %d", c->self);
 
 	channel_send_open(c->self);
@@ -1856,6 +1973,13 @@ static int
 ssh_session2(void)
 {
 	int id = -1;
+
+	/*
+	 * We need to initialize this early because the forwarding logic below
+	 * might open channels that use the hpn buffer sizes.  We can't send a
+	 * window of -1 (the default) to the server as it breaks things.
+	 */
+	hpn_options_init();
 
 	/* XXX should be pre-session */
 	if (!options.control_persist)
@@ -1928,9 +2052,6 @@ ssh_session2(void)
 		} else
 			fork_postauth();
 	}
-
-	if (options.use_roaming)
-		request_roaming();
 
 	return client_loop(tty_flag, tty_flag ?
 	    options.escape_char : SSH_ESCAPECHAR_NONE, id);

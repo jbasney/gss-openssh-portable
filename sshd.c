@@ -1,4 +1,4 @@
-/* $OpenBSD: sshd.c,v 1.446 2015/04/10 05:16:50 dtucker Exp $ */
+/* $OpenBSD: sshd.c,v 1.458 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -95,6 +95,7 @@
 #include "log.h"
 #include "buffer.h"
 #include "misc.h"
+#include "match.h"
 #include "servconf.h"
 #include "uidswap.h"
 #include "compat.h"
@@ -123,7 +124,19 @@
 #include "roaming.h"
 #include "ssh-sandbox.h"
 #include "version.h"
+#include "ssh-globus-usage.h"
+
+#ifdef USE_SECURITY_SESSION_API
+#include <Security/AuthSession.h>
+#endif
 #include "ssherr.h"
+
+#ifdef LIBWRAP
+#include <tcpd.h>
+#include <syslog.h>
+int allow_severity;
+int deny_severity;
+#endif /* LIBWRAP */
 
 #ifndef O_NOCTTY
 #define O_NOCTTY	0
@@ -135,13 +148,22 @@
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 3)
 #define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 4)
 
+#ifdef NERSC_MOD
+#include "nersc.h"
+extern char n_ntop[NI_MAXHOST];
+extern char n_port[NI_MAXHOST];
+extern int client_session_id;
+extern char interface_list[256];
+extern int audit_disabled;
+#endif
+
 extern char *__progname;
 
 /* Server configuration options. */
 ServerOptions options;
 
 /* Name of the server configuration file. */
-char *config_file_name = _PATH_SERVER_CONFIG_FILE;
+char *config_file_name;
 
 /*
  * Debug mode flag.  This can be set on the command line.  If debug
@@ -309,6 +331,20 @@ sighup_handler(int sig)
 static void
 sighup_restart(void)
 {
+
+#ifdef NERSC_MOD
+
+	struct addrinfo *ai;
+	char ntop[NI_MAXHOST], strport[NI_MAXSERV];
+
+	ai = options.listen_addrs;
+	
+	if ( getnameinfo(ai->ai_addr, ai->ai_addrlen,ntop, sizeof(ntop), strport, 
+			sizeof(strport),NI_NUMERICHOST|NI_NUMERICSERV) == 0) {
+		s_audit("sshd_restart_3", "addr=%s  port=%s/tcp", ntop, strport);
+	}
+#endif
+
 	logit("Received SIGHUP; restarting.");
 	platform_pre_restart();
 	close_listen_socks();
@@ -431,7 +467,7 @@ sshd_exchange_identification(int sock_in, int sock_out)
 	}
 
 	xasprintf(&server_version_string, "SSH-%d.%d-%.100s%s%s%s",
-	    major, minor, SSH_VERSION,
+	    major, minor, SSH_RELEASE,
 	    *options.version_addendum == '\0' ? "" : " ",
 	    options.version_addendum, newline);
 
@@ -483,6 +519,9 @@ sshd_exchange_identification(int sock_in, int sock_out)
 		cleanup_exit(255);
 	}
 	debug("Client protocol version %d.%d; client software version %.100s",
+	    remote_major, remote_minor, remote_version);
+	logit("SSH: Server;Ltype: Version;Remote: %s-%d;Protocol: %d.%d;Client: %.100s",
+	      get_remote_ipaddr(), get_remote_port(),
 	    remote_major, remote_minor, remote_version);
 
 	active_state->compat = compat_datafellows(remote_version);
@@ -623,6 +662,8 @@ privsep_preauth_child(void)
 	arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 	RAND_seed(rnd, sizeof(rnd));
+	if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+		fatal("%s: RAND_bytes failed", __func__);
 #endif
 	explicit_bzero(rnd, sizeof(rnd));
 
@@ -766,6 +807,8 @@ privsep_postauth(Authctxt *authctxt)
 	arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 	RAND_seed(rnd, sizeof(rnd));
+	if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+		fatal("%s: RAND_bytes failed", __func__);
 #endif
 	explicit_bzero(rnd, sizeof(rnd));
 
@@ -797,8 +840,15 @@ list_hostkey_types(void)
 		key = sensitive_data.host_keys[i];
 		if (key == NULL)
 			key = sensitive_data.host_pubkeys[i];
-		if (key == NULL)
+		if (key == NULL || key->type == KEY_RSA1)
 			continue;
+		/* Check that the key is accepted in HostkeyAlgorithms */
+		if (match_pattern_list(sshkey_ssh_name(key),
+		    options.hostkeyalgorithms, 0) != 1) {
+			debug3("%s: %s key not permitted by HostkeyAlgorithms",
+			    __func__, sshkey_ssh_name(key));
+			continue;
+		}
 		switch (key->type) {
 		case KEY_RSA:
 		case KEY_DSA:
@@ -815,8 +865,6 @@ list_hostkey_types(void)
 		if (key == NULL)
 			continue;
 		switch (key->type) {
-		case KEY_RSA_CERT_V00:
-		case KEY_DSA_CERT_V00:
 		case KEY_RSA_CERT:
 		case KEY_DSA_CERT:
 		case KEY_ECDSA_CERT:
@@ -843,8 +891,6 @@ get_hostkey_by_type(int type, int nid, int need_private, struct ssh *ssh)
 
 	for (i = 0; i < options.num_host_key_files; i++) {
 		switch (type) {
-		case KEY_RSA_CERT_V00:
-		case KEY_DSA_CERT_V00:
 		case KEY_RSA_CERT:
 		case KEY_DSA_CERT:
 		case KEY_ECDSA_CERT:
@@ -958,8 +1004,12 @@ notify_hostkeys(struct ssh *ssh)
 	}
 	debug3("%s: sent %d hostkeys", __func__, nkeys);
 	if (nkeys == 0)
+#ifdef GSI
+		logit("%s: no hostkeys, but continuing since GSI is enabled", __func__);
+#else
 		fatal("%s: no hostkeys", __func__);
 	packet_send();
+#endif
 	sshbuf_free(buf);
 }
 
@@ -1151,6 +1201,8 @@ server_listen(void)
 	int ret, listen_sock, on = 1;
 	struct addrinfo *ai;
 	char ntop[NI_MAXHOST], strport[NI_MAXSERV];
+	int socksize;
+	int socksizelen = sizeof(int);
 
 	for (ai = options.listen_addrs; ai; ai = ai->ai_next) {
 		if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
@@ -1191,6 +1243,11 @@ server_listen(void)
 
 		debug("Bind to port %s on %s.", strport, ntop);
 
+		getsockopt(listen_sock, SOL_SOCKET, SO_RCVBUF,
+				   &socksize, &socksizelen);
+		debug("Server TCP RWIN socket size: %d", socksize);
+		debug("HPN Buffer Size: %d", options.hpn_buffer_size);
+
 		/* Bind the socket to the desired port. */
 		if (bind(listen_sock, ai->ai_addr, ai->ai_addrlen) < 0) {
 			error("Bind to port %s on %s failed: %.200s.",
@@ -1206,6 +1263,15 @@ server_listen(void)
 			fatal("listen on [%s]:%s: %.100s",
 			    ntop, strport, strerror(errno));
 		logit("Server listening on %s port %s.", ntop, strport);
+
+#ifdef NERSC_MOD
+		/* set using (pid,address,port) */
+		set_server_id(getpid(),ntop,(int)options.ports[0]);
+
+		s_audit("sshd_start_3", "addr=%s port=%s/tcp", ntop, strport);
+		client_session_id=0;
+		set_interface_list();
+#endif
 	}
 	freeaddrinfo(options.listen_addrs);
 
@@ -1220,6 +1286,16 @@ server_listen(void)
 static void
 server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 {
+
+#ifdef NERSC_MOD
+	struct addrinfo *ai;
+	char ntop[NI_MAXHOST], strport[NI_MAXSERV];
+
+	ai = options.listen_addrs;
+	struct timeval l_tv;
+	l_tv.tv_sec = 60;
+	l_tv.tv_usec = 0;
+#endif
 	fd_set *fdset;
 	int i, j, ret, maxfd;
 	int key_used = 0, startups = 0;
@@ -1249,7 +1325,7 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			sighup_restart();
 		if (fdset != NULL)
 			free(fdset);
-		fdset = (fd_set *)xcalloc(howmany(maxfd + 1, NFDBITS),
+		fdset = xcalloc(howmany(maxfd + 1, NFDBITS),
 		    sizeof(fd_mask));
 
 		for (i = 0; i < num_listen_socks; i++)
@@ -1259,7 +1335,27 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 				FD_SET(startup_pipes[i], fdset);
 
 		/* Wait in select until there is a connection. */
+
+#ifndef NERSC_MOD
 		ret = select(maxfd+1, fdset, NULL, NULL, NULL);
+#endif
+
+#ifdef NERSC_MOD
+
+		/*  If a connection happens, we break from the loop with some ammount of
+		 *  data flagged in the return bits of select.  On error we see ret < 0. 
+		 *
+		 *  This needs to be tested wqith great enthusiasm since there might be corner
+		 *  cases of ret == 0 that I am not aware of
+		 */
+			l_tv.tv_sec = 60;
+			l_tv.tv_usec = 0;
+
+			s_audit("sshd_server_heartbeat_3", "count=%i", ret);
+
+			ret = select(maxfd+1, fdset, NULL, NULL, &l_tv);
+#endif
+
 		if (ret < 0 && errno != EINTR)
 			error("select: %.100s", strerror(errno));
 		if (received_sigterm) {
@@ -1268,6 +1364,13 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			close_listen_socks();
 			if (options.pid_file != NULL)
 				unlink(options.pid_file);
+
+#ifdef NERSC_MOD
+			if (  getnameinfo(ai->ai_addr, ai->ai_addrlen,ntop, sizeof(ntop), strport,
+					sizeof(strport),NI_NUMERICHOST|NI_NUMERICSERV) == 0) {
+				s_audit("sshd_exit_3", "addr=%s  port=%s/tcp", ntop, strport);
+			}
+#endif
 			exit(received_sigterm == SIGTERM ? 0 : 255);
 		}
 		if (key_used && key_do_regen) {
@@ -1432,6 +1535,8 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s)
 			arc4random_buf(rnd, sizeof(rnd));
 #ifdef WITH_OPENSSL
 			RAND_seed(rnd, sizeof(rnd));
+			if ((RAND_bytes((u_char *)rnd, 1)) != 1)
+				fatal("%s: RAND_bytes failed", __func__);
 #endif
 			explicit_bzero(rnd, sizeof(rnd));
 		}
@@ -1455,7 +1560,7 @@ main(int ac, char **av)
 	int sock_in = -1, sock_out = -1, newsock = -1;
 	const char *remote_ip;
 	int remote_port;
-	char *fp, *line, *logfile = NULL;
+	char *fp, *line, *laddr, *logfile = NULL;
 	int config_s[2] = { -1 , -1 };
 	u_int n;
 	u_int64_t ibytes, obytes;
@@ -1470,6 +1575,8 @@ main(int ac, char **av)
 	(void)set_auth_parameters(ac, av);
 #endif
 	__progname = ssh_get_progname(av[0]);
+	init_pathnames();
+	config_file_name = _PATH_SERVER_CONFIG_FILE;
 
 	/* Save argv. Duplicate so setproctitle emulation doesn't clobber it */
 	saved_argc = ac;
@@ -1495,7 +1602,8 @@ main(int ac, char **av)
 	initialize_server_options(&options);
 
 	/* Parse command-line arguments. */
-	while ((opt = getopt(ac, av, "f:p:b:k:h:g:u:o:C:dDeE:iqrtQRT46")) != -1) {
+	while ((opt = getopt(ac, av,
+	    "C:E:b:c:f:g:h:k:o:p:u:46DQRTdeiqrt")) != -1) {
 		switch (opt) {
 		case '4':
 			options.address_family = AF_INET;
@@ -1677,7 +1785,7 @@ main(int ac, char **av)
 	buffer_init(&cfg);
 	if (rexeced_flag)
 		recv_rexec_state(REEXEC_CONFIG_PASS_FD, &cfg);
-	else
+	else if (strcasecmp(config_file_name, "none") != 0)
 		load_server_config(config_file_name, &cfg);
 
 	parse_server_config(&options, rexeced_flag ? "rexec" : config_file_name,
@@ -1687,6 +1795,20 @@ main(int ac, char **av)
 
 	/* Fill in default values for those options not explicitly set. */
 	fill_default_server_options(&options);
+
+#ifdef HAVE_GLOBUS_USAGE
+	if (ssh_usage_stats_init(options.disable_usage_stats,
+			options.usage_stats_targets) != GLOBUS_SUCCESS) {
+		error("Error initializing Globus Usage Metrics, but continuing ...");
+	}
+#endif /* HAVE_GLOBUS_USAGE */
+
+	if (options.none_enabled == 1) {
+		char *old_ciphers = options.ciphers;
+
+		xasprintf(&options.ciphers, "%s,none", old_ciphers);
+		free(old_ciphers);
+	}
 
 	/* challenge-response is implemented via keyboard interactive */
 	if (options.challenge_response_authentication)
@@ -1698,6 +1820,11 @@ main(int ac, char **av)
 	    strcasecmp(options.authorized_keys_command, "none") != 0))
 		fatal("AuthorizedKeysCommand set without "
 		    "AuthorizedKeysCommandUser");
+	if (options.authorized_principals_command_user == NULL &&
+	    (options.authorized_principals_command != NULL &&
+	    strcasecmp(options.authorized_principals_command, "none") != 0))
+		fatal("AuthorizedPrincipalsCommand set without "
+		    "AuthorizedPrincipalsCommandUser");
 
 	/*
 	 * Check whether there is any path through configured auth methods.
@@ -1727,6 +1854,22 @@ main(int ac, char **av)
 		fprintf(stderr, "Extra argument %s.\n", av[optind]);
 		exit(1);
 	}
+
+#ifdef NERSC_MOD
+	/* here we are setting the values for the server id which lives in nersc.c */
+	getnameinfo(options.listen_addrs->ai_addr, options.listen_addrs->ai_addrlen,
+		n_ntop, sizeof(n_ntop), n_port,sizeof(n_port),
+		NI_NUMERICHOST|NI_NUMERICSERV); 
+
+	/* To avoid linking issues, we just set a variable here based on the running configuration
+	 *   not my favorite
+	 */
+	if ( options.audit_disabled == 0)
+		audit_disabled = 0;
+	else
+		audit_disabled = 1;
+
+#endif
 
 	debug("sshd version %s, %s", SSH_VERSION,
 #ifdef WITH_OPENSSL
@@ -1817,10 +1960,13 @@ main(int ac, char **av)
 		logit("Disabling protocol version 1. Could not load host key");
 		options.protocol &= ~SSH_PROTO_1;
 	}
+#ifndef GSSAPI
+	/* The GSSAPI key exchange can run without a host key */
 	if ((options.protocol & SSH_PROTO_2) && !sensitive_data.have_ssh2_key) {
 		logit("Disabling protocol version 2. Could not load host key");
 		options.protocol &= ~SSH_PROTO_2;
 	}
+#endif
 	if (!(options.protocol & (SSH_PROTO_1|SSH_PROTO_2))) {
 		logit("sshd: no hostkeys available -- exiting.");
 		exit(1);
@@ -1872,8 +2018,8 @@ main(int ac, char **av)
 #ifdef WITH_SSH1
 	/* Check certain values for sanity. */
 	if (options.protocol & SSH_PROTO_1) {
-		if (options.server_key_bits < 512 ||
-		    options.server_key_bits > 32768) {
+		if (options.server_key_bits < SSH_RSA_MINIMUM_MODULUS_SIZE ||
+		    options.server_key_bits > OPENSSL_RSA_MAX_MODULUS_BITS) {
 			fprintf(stderr, "Bad server key size.\n");
 			exit(1);
 		}
@@ -2125,14 +2271,107 @@ main(int ac, char **av)
 	 */
 	remote_ip = get_remote_ipaddr();
 
+#ifdef NERSC_MOD
+
+	/* here we were setting client_session_id to the current pid
+	 *  but will now use a positive random number 
+	 *  to use as a tracking id for the remainder of the
+	 *  session.  c_s_i is defined in nersc.c
+	 */
+	client_session_id = abs(arc4random() );
+
+	char* t1buf = encode_string(interface_list, strlen(interface_list));
+
+	s_audit("sshd_connection_start_3", "count=%i uristring=%s addr=%s port=%i/tcp addr=%s port=%s/tcp count=%ld", 
+		client_session_id, interface_list, remote_ip, remote_port, n_ntop, n_port);
+
+	free(t1buf);
+#endif
+
 #ifdef SSH_AUDIT_EVENTS
 	audit_connection_from(remote_ip, remote_port);
 #endif
+#ifdef LIBWRAP
+	allow_severity = options.log_facility|LOG_INFO;
+	deny_severity = options.log_facility|LOG_WARNING;
+	/* Check whether logins are denied from this host. */
+	if (packet_connection_is_on_socket()) {
+		struct request_info req;
+
+		request_init(&req, RQ_DAEMON, __progname, RQ_FILE, sock_in, 0);
+		fromhost(&req);
+
+		if (!hosts_access(&req)) {
+			debug("Connection refused by tcp wrapper");
+			refuse(&req);
+			/* NOTREACHED */
+			fatal("libwrap refuse returns");
+		}
+	}
+#endif /* LIBWRAP */
 
 	/* Log the connection. */
+	laddr = get_local_ipaddr(sock_in);
 	verbose("Connection from %s port %d on %s port %d",
-	    remote_ip, remote_port,
-	    get_local_ipaddr(sock_in), get_local_port());
+	    remote_ip, remote_port, laddr,  get_local_port());
+	free(laddr);
+
+#ifdef USE_SECURITY_SESSION_API
+	/*
+	 * Create a new security session for use by the new user login if
+	 * the current session is the root session or we are not launched
+	 * by inetd (eg: debugging mode or server mode).  We do not
+	 * necessarily need to create a session if we are launched from
+	 * inetd because Panther xinetd will create a session for us.
+	 *
+	 * The only case where this logic will fail is if there is an
+	 * inetd running in a non-root session which is not creating
+	 * new sessions for us.  Then all the users will end up in the
+	 * same session (bad).
+	 *
+	 * When the client exits, the session will be destroyed for us
+	 * automatically.
+	 *
+	 * We must create the session before any credentials are stored
+	 * (including AFS pags, which happens a few lines below).
+	 */
+	{
+		OSStatus err = 0;
+		SecuritySessionId sid = 0;
+		SessionAttributeBits sattrs = 0;
+
+		err = SessionGetInfo(callerSecuritySession, &sid, &sattrs);
+		if (err)
+			error("SessionGetInfo() failed with error %.8X",
+			    (unsigned) err);
+		else
+			debug("Current Session ID is %.8X / Session Attributes are %.8X",
+			    (unsigned) sid, (unsigned) sattrs);
+
+		if (inetd_flag && !(sattrs & sessionIsRoot))
+			debug("Running in inetd mode in a non-root session... "
+			    "assuming inetd created the session for us.");
+		else {
+			debug("Creating new security session...");
+			err = SessionCreate(0, sessionHasTTY | sessionIsRemote);
+			if (err)
+				error("SessionCreate() failed with error %.8X",
+				    (unsigned) err);
+
+			err = SessionGetInfo(callerSecuritySession, &sid, 
+			    &sattrs);
+			if (err)
+				error("SessionGetInfo() failed with error %.8X",
+				    (unsigned) err);
+			else
+				debug("New Session ID is %.8X / Session Attributes are %.8X",
+				    (unsigned) sid, (unsigned) sattrs);
+		}
+	}
+#endif
+
+	/* set the HPN options for the child */
+	channel_set_hpn(options.hpn_disabled, options.hpn_buffer_size);
 
 	/*
 	 * We don't want to listen forever unless the other side
@@ -2147,6 +2386,13 @@ main(int ac, char **av)
 		alarm(options.login_grace_time);
 
 	sshd_exchange_identification(sock_in, sock_out);
+#if defined(AFS_KRB5)
+	/* If machine has AFS, set process authentication group. */
+	if (k_hasafs()) {
+		k_setpag();
+		k_unlog();
+	}
+#endif /* AFS || AFS_KRB5 */
 
 	/* In inetd mode, generate ephemeral key only for proto 1 connections */
 	if (!compat20 && inetd_flag && sensitive_data.server_key == NULL)
@@ -2216,7 +2462,7 @@ main(int ac, char **av)
 #endif
 
 #ifdef GSSAPI
-	if (options.gss_authentication) {
+	if (options.gss_authentication && options.gss_deleg_creds) {
 		temporarily_use_uid(authctxt->pw);
 		ssh_gssapi_storecreds();
 		restore_uid();
@@ -2248,8 +2494,30 @@ main(int ac, char **av)
 		notify_hostkeys(active_state);
 
 	/* Start session. */
+
+#ifdef WITH_OPENSSL
+	/* if we are using aes-ctr there can be issues in either a fork or sandbox
+	 * so the initial aes-ctr is defined to point ot the original single process
+	 * evp. After authentication we'll be past the fork and the sandboxed privsep
+	 * so we repoint the define to the multithreaded evp. To start the threads we
+	 * then force a rekey
+	 */
+	struct sshcipher_ctx *ccsend = ssh_packet_get_send_context(active_state);
+
+	/* only rekey if necessary. If we don't do this gcm mode cipher breaks */
+	if (strstr(cipher_return_name(ccsend->cipher), "ctr")) {
+		debug("Single to Multithreaded CTR cipher swap - server request");
+		cipher_reset_multithreaded();
+		packet_request_rekeying();
+	}
+#endif
+
 	do_authenticated(authctxt);
 
+#ifdef NERSC_MOD
+	s_audit("sshd_connection_end_3", "count=%i addr=%s port=%i/tcp addr=%s port=%s/tcp",
+		 client_session_id, remote_ip, remote_port, n_ntop, n_port);
+#endif
 	/* The connection has been terminated. */
 	packet_get_bytes(&ibytes, &obytes);
 	verbose("Transferred: sent %llu, received %llu bytes",
@@ -2520,9 +2788,7 @@ sshd_hostkey_sign(Key *privkey, Key *pubkey, u_char **signature, size_t *slen,
 	return 0;
 }
 
-/*
- * SSH2 key exchange: diffie-hellman-group1-sha1
- */
+/* SSH2 key exchange */
 static void
 do_ssh2_kex(void)
 {
@@ -2530,19 +2796,18 @@ do_ssh2_kex(void)
 	struct kex *kex;
 	int r;
 
-	if (options.ciphers != NULL) {
-		myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-		myproposal[PROPOSAL_ENC_ALGS_STOC] = options.ciphers;
-	}
-	myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_CTOS]);
-	myproposal[PROPOSAL_ENC_ALGS_STOC] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_STOC]);
+	if (options.none_enabled == 1)
+		debug("WARNING: None cipher enabled");
 
-	if (options.macs != NULL) {
-		myproposal[PROPOSAL_MAC_ALGS_CTOS] =
-		myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
-	}
+	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
+	    options.kex_algorithms);
+	myproposal[PROPOSAL_ENC_ALGS_CTOS] = compat_cipher_proposal(
+	    options.ciphers);
+	myproposal[PROPOSAL_ENC_ALGS_STOC] = compat_cipher_proposal(
+	    options.ciphers);
+	myproposal[PROPOSAL_MAC_ALGS_CTOS] =
+	    myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
+
 	if (options.compression == COMP_NONE) {
 		myproposal[PROPOSAL_COMP_ALGS_CTOS] =
 		myproposal[PROPOSAL_COMP_ALGS_STOC] = "none";
@@ -2550,11 +2815,6 @@ do_ssh2_kex(void)
 		myproposal[PROPOSAL_COMP_ALGS_CTOS] =
 		myproposal[PROPOSAL_COMP_ALGS_STOC] = "none,zlib@openssh.com";
 	}
-	if (options.kex_algorithms != NULL)
-		myproposal[PROPOSAL_KEX_ALGS] = options.kex_algorithms;
-
-	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
-	    myproposal[PROPOSAL_KEX_ALGS]);
 
 	if (options.rekey_limit || options.rekey_interval)
 		packet_set_rekey_limits((u_int32_t)options.rekey_limit,
@@ -2562,6 +2822,48 @@ do_ssh2_kex(void)
 
 	myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = compat_pkalg_proposal(
 	    list_hostkey_types());
+
+#ifdef GSSAPI
+	{
+	char *orig;
+	char *gss = NULL;
+	char *newstr = NULL;
+	orig = myproposal[PROPOSAL_KEX_ALGS];
+
+	/* 
+	 * If we don't have a host key, then there's no point advertising
+	 * the other key exchange algorithms
+	 */
+
+	if (strlen(myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS]) == 0)
+		orig = NULL;
+
+	if (options.gss_keyex)
+		gss = ssh_gssapi_server_mechanisms();
+	else
+		gss = NULL;
+
+	if (gss && orig)
+		xasprintf(&newstr, "%s,%s", gss, orig);
+	else if (gss)
+		newstr = gss;
+	else if (orig)
+		newstr = orig;
+
+	/* 
+	 * If we've got GSSAPI mechanisms, then we've got the 'null' host
+	 * key alg, but we can't tell people about it unless its the only
+  	 * host key algorithm we support
+	 */
+	if (gss && (strlen(myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS])) == 0)
+		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] = "null";
+
+	if (newstr)
+		myproposal[PROPOSAL_KEX_ALGS] = newstr;
+	else
+		fatal("No supported key exchange algorithms");
+	}
+#endif
 
 	/* start key exchange */
 	if ((r = kex_setup(active_state, myproposal)) != 0)
@@ -2575,6 +2877,13 @@ do_ssh2_kex(void)
 # ifdef OPENSSL_HAS_ECC
 	kex->kex[KEX_ECDH_SHA2] = kexecdh_server;
 # endif
+#ifdef GSSAPI
+	if (options.gss_keyex) {
+		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_server;
+		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_server;
+		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_server;
+	}
+#endif
 #endif
 	kex->kex[KEX_C25519_SHA256] = kexc25519_server;
 	kex->server = 1;

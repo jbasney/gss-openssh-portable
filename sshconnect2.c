@@ -1,4 +1,4 @@
-/* $OpenBSD: sshconnect2.c,v 1.223 2015/01/30 11:43:14 djm Exp $ */
+/* $OpenBSD: sshconnect2.c,v 1.226 2015/07/30 00:01:34 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  * Copyright (c) 2008 Damien Miller.  All rights reserved.
@@ -80,6 +80,14 @@
 extern char *client_version_string;
 extern char *server_version_string;
 extern Options options;
+struct kex *xxx_kex;
+
+/*
+ * tty_flag is set in ssh.c. Use this in ssh_userauth2:
+ * if it is set, then prevent the switch to the null cipher.
+ */
+
+extern int tty_flag;
 
 /*
  * SSH2 key exchange
@@ -153,28 +161,50 @@ order_hostkeyalgs(char *host, struct sockaddr *hostaddr, u_short port)
 	return ret;
 }
 
+static char *myproposal[PROPOSAL_MAX];
+static const char *myproposal_default[PROPOSAL_MAX] = { KEX_CLIENT };
 void
 ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 {
-	char *myproposal[PROPOSAL_MAX] = { KEX_CLIENT };
 	struct kex *kex;
 	int r;
+
+	memcpy(&myproposal, &myproposal_default, sizeof(myproposal));
+#ifdef GSSAPI
+	char *orig = NULL, *gss = NULL;
+	char *gss_host = NULL;
+#endif
 
 	xxx_host = host;
 	xxx_hostaddr = hostaddr;
 
-	if (options.ciphers == (char *)-1) {
-		logit("No valid ciphers for protocol version 2 given, using defaults.");
-		options.ciphers = NULL;
+	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
+	    options.kex_algorithms);
+
+#ifdef GSSAPI
+	if (options.gss_keyex) {
+		/* Add the GSSAPI mechanisms currently supported on this 
+		 * client to the key exchange algorithm proposal */
+		orig = myproposal[PROPOSAL_KEX_ALGS];
+
+		if (options.gss_trust_dns)
+			gss_host = (char *)get_canonical_hostname(1);
+		else
+			gss_host = host;
+
+		gss = ssh_gssapi_client_mechanisms(gss_host, options.gss_client_identity);
+		if (gss) {
+			debug("Offering GSSAPI proposal: %s", gss);
+			xasprintf(&myproposal[PROPOSAL_KEX_ALGS],
+			    "%s,%s", gss, orig);
+		}
 	}
-	if (options.ciphers != NULL) {
-		myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-		myproposal[PROPOSAL_ENC_ALGS_STOC] = options.ciphers;
-	}
+#endif
+
 	myproposal[PROPOSAL_ENC_ALGS_CTOS] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_CTOS]);
+	    compat_cipher_proposal(options.ciphers);
 	myproposal[PROPOSAL_ENC_ALGS_STOC] =
-	    compat_cipher_proposal(myproposal[PROPOSAL_ENC_ALGS_STOC]);
+	    compat_cipher_proposal(options.ciphers);
 	if (options.compression) {
 		myproposal[PROPOSAL_COMP_ALGS_CTOS] =
 		myproposal[PROPOSAL_COMP_ALGS_STOC] = "zlib@openssh.com,zlib,none";
@@ -182,23 +212,33 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 		myproposal[PROPOSAL_COMP_ALGS_CTOS] =
 		myproposal[PROPOSAL_COMP_ALGS_STOC] = "none,zlib@openssh.com,zlib";
 	}
-	if (options.macs != NULL) {
-		myproposal[PROPOSAL_MAC_ALGS_CTOS] =
-		myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
-	}
-	if (options.hostkeyalgorithms != NULL)
+	myproposal[PROPOSAL_MAC_ALGS_CTOS] =
+	    myproposal[PROPOSAL_MAC_ALGS_STOC] = options.macs;
+	if (options.hostkeyalgorithms != NULL) {
+		if (kex_assemble_names(KEX_DEFAULT_PK_ALG,
+		    &options.hostkeyalgorithms) != 0)
+			fatal("%s: kex_assemble_namelist", __func__);
 		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] =
 		    compat_pkalg_proposal(options.hostkeyalgorithms);
-	else {
+	} else {
+		/* Enforce default */
+		options.hostkeyalgorithms = xstrdup(KEX_DEFAULT_PK_ALG);
 		/* Prefer algorithms that we already have keys for */
 		myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS] =
 		    compat_pkalg_proposal(
 		    order_hostkeyalgs(host, hostaddr, port));
 	}
-	if (options.kex_algorithms != NULL)
-		myproposal[PROPOSAL_KEX_ALGS] = options.kex_algorithms;
-	myproposal[PROPOSAL_KEX_ALGS] = compat_kex_proposal(
-	    myproposal[PROPOSAL_KEX_ALGS]);
+
+#ifdef GSSAPI
+	/* If we've got GSSAPI algorithms, then we also support the
+	 * 'null' hostkey, as a last resort */
+	if (options.gss_keyex && gss) {
+		orig = myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS];
+		xasprintf(&myproposal[PROPOSAL_SERVER_HOST_KEY_ALGS], 
+		    "%s,null", orig);
+		free(gss);
+	}
+#endif
 
 	if (options.rekey_limit || options.rekey_interval)
 		packet_set_rekey_limits((u_int32_t)options.rekey_limit,
@@ -216,11 +256,33 @@ ssh_kex2(char *host, struct sockaddr *hostaddr, u_short port)
 # ifdef OPENSSL_HAS_ECC
 	kex->kex[KEX_ECDH_SHA2] = kexecdh_client;
 # endif
+#ifdef GSSAPI
+	if (options.gss_keyex) {
+		kex->kex[KEX_GSS_GRP1_SHA1] = kexgss_client;
+		kex->kex[KEX_GSS_GRP14_SHA1] = kexgss_client;
+		kex->kex[KEX_GSS_GEX_SHA1] = kexgss_client;
+	}
+#endif
 #endif
 	kex->kex[KEX_C25519_SHA256] = kexc25519_client;
 	kex->client_version_string=client_version_string;
 	kex->server_version_string=server_version_string;
 	kex->verify_host_key=&verify_host_key_callback;
+
+#ifdef GSSAPI
+	if (options.gss_keyex) {
+		kex->gss_deleg_creds = options.gss_deleg_creds;
+		kex->gss_trust_dns = options.gss_trust_dns;
+		kex->gss_client = options.gss_client_identity;
+		if (options.gss_server_identity) {
+			kex->gss_host = options.gss_server_identity;
+		} else {
+			kex->gss_host = gss_host;
+        }
+	}
+#endif
+
+	xxx_kex = kex;
 
 	dispatch_run(DISPATCH_BLOCK, &kex->done, active_state);
 
@@ -313,6 +375,7 @@ int	input_gssapi_token(int type, u_int32_t, void *);
 int	input_gssapi_hash(int type, u_int32_t, void *);
 int	input_gssapi_error(int, u_int32_t, void *);
 int	input_gssapi_errtok(int, u_int32_t, void *);
+int	userauth_gsskeyex(Authctxt *authctxt);
 #endif
 
 void	userauth(Authctxt *, char *);
@@ -328,6 +391,11 @@ static char *authmethods_get(void);
 
 Authmethod authmethods[] = {
 #ifdef GSSAPI
+	{"gssapi-keyex",
+		userauth_gsskeyex,
+		NULL,
+		&options.gss_authentication,
+		NULL},
 	{"gssapi-with-mic",
 		userauth_gssapi,
 		NULL,
@@ -422,6 +490,43 @@ ssh_userauth2(const char *local_user, const char *server_user, char *host,
 
 	pubkey_cleanup(&authctxt);
 	dispatch_range(SSH2_MSG_USERAUTH_MIN, SSH2_MSG_USERAUTH_MAX, NULL);
+
+	/*
+	 * If the user wants to use the none cipher, do it post authentication
+	 * and only if the right conditions are met -- both of the NONE commands
+	 * must be true and there must be no tty allocated.
+	 */
+	if ((options.none_switch == 1) && (options.none_enabled == 1)) {
+		if (!tty_flag) { /* no null on tty sessions */
+			debug("Requesting none rekeying...");
+			myproposal[PROPOSAL_ENC_ALGS_STOC] = "none";
+			myproposal[PROPOSAL_ENC_ALGS_CTOS] = "none";
+			kex_prop2buf(active_state->kex->my, myproposal);
+			packet_request_rekeying();
+			fprintf(stderr, "WARNING: ENABLED NONE CIPHER\n");
+		} else {
+			/* requested NONE cipher when in a tty */
+			debug("Cannot switch to NONE cipher with tty allocated");
+			fprintf(stderr, "NONE cipher switch disabled when a TTY is allocated\n");
+		}
+	}
+
+#ifdef WITH_OPENSSL
+	/* if we are using aes-ctr there can be issues in either a fork or sandbox
+	 * so the initial aes-ctr is defined to point to the original single process
+	 * evp. After authentication we'll be past the fork and the sandboxed privsep
+	 * so we repoint the define to the multithreaded evp. To start the threads we
+	 * then force a rekey
+	 */
+	struct sshcipher_ctx *ccsend = ssh_packet_get_send_context(active_state);
+
+	/* only do this for the ctr cipher. otherwise gcm mode breaks. Don't know why though */
+	if (strstr(cipher_return_name(ccsend->cipher), "ctr")) {
+		debug("Single to Multithread CTR cipher swap - client request");
+		cipher_reset_multithreaded();
+		packet_request_rekeying();
+	}
+#endif
 
 	debug("Authentication succeeded (%s).", authctxt.method->name);
 }
@@ -634,19 +739,36 @@ userauth_gssapi(Authctxt *authctxt)
 	static u_int mech = 0;
 	OM_uint32 min;
 	int ok = 0;
+	char *gss_host = NULL;
+
+	if (!options.gss_authentication) {
+		verbose("GSSAPI authentication disabled.");
+		return 0;
+	}
+
+	if (options.gss_server_identity)
+		gss_host = (char *)options.gss_server_identity;
+	else if (options.gss_trust_dns)
+		gss_host = (char *)get_canonical_hostname(1);
+	else
+		gss_host = (char *)authctxt->host;
 
 	/* Try one GSSAPI method at a time, rather than sending them all at
 	 * once. */
 
 	if (gss_supported == NULL)
-		gss_indicate_mechs(&min, &gss_supported);
+		if (GSS_ERROR(gss_indicate_mechs(&min, &gss_supported))) {
+			gss_supported = NULL;
+			return 0;
+		}
 
 	/* Check to see if the mechanism is usable before we offer it */
 	while (mech < gss_supported->count && !ok) {
 		/* My DER encoding requires length<128 */
 		if (gss_supported->elements[mech].length < 128 &&
 		    ssh_gssapi_check_mechanism(&gssctxt, 
-		    &gss_supported->elements[mech], authctxt->host)) {
+		    &gss_supported->elements[mech], gss_host, 
+                    options.gss_client_identity)) {
 			ok = 1; /* Mechanism works */
 		} else {
 			mech++;
@@ -710,7 +832,8 @@ process_gssapi_token(void *ctxt, gss_buffer_t recv_tok)
 
 	if (status == GSS_S_COMPLETE) {
 		/* send either complete or MIC, depending on mechanism */
-		if (!(flags & GSS_C_INTEG_FLAG)) {
+		if (strcmp(authctxt->method->name,"gssapi")==0 ||
+		    (!(flags & GSS_C_INTEG_FLAG))) {
 			packet_start(SSH2_MSG_USERAUTH_GSSAPI_EXCHANGE_COMPLETE);
 			packet_send();
 		} else {
@@ -743,8 +866,8 @@ input_gssapi_response(int type, u_int32_t plen, void *ctxt)
 {
 	Authctxt *authctxt = ctxt;
 	Gssctxt *gssctxt;
-	int oidlen;
-	char *oidv;
+	u_int oidlen;
+	u_char *oidv;
 
 	if (authctxt == NULL)
 		fatal("input_gssapi_response: no authentication context");
@@ -857,6 +980,73 @@ input_gssapi_error(int type, u_int32_t plen, void *ctxt)
 	free(lang);
 	return 0;
 }
+
+#ifdef GSI
+extern
+const gss_OID_desc * const              gss_mech_globus_gssapi_openssl;
+#define is_gsi_oid(oid) \
+  (oid->length == gss_mech_globus_gssapi_openssl->length && \
+   (memcmp(oid->elements, gss_mech_globus_gssapi_openssl->elements, \
+	   oid->length) == 0))
+#endif
+
+int
+userauth_gsskeyex(Authctxt *authctxt)
+{
+	Buffer b;
+	gss_buffer_desc gssbuf;
+	gss_buffer_desc mic = GSS_C_EMPTY_BUFFER;
+	OM_uint32 ms;
+
+	static int attempt = 0;
+	if (attempt++ >= 1)
+		return (0);
+
+	if (gss_kex_context == NULL) {
+		debug("No valid Key exchange context"); 
+		return (0);
+	}
+
+#ifdef GSI
+    if (options.implicit && is_gsi_oid(gss_kex_context->oid)) {
+        ssh_gssapi_buildmic(&b, "", authctxt->service, "gssapi-keyex");
+	} else {
+#endif
+        ssh_gssapi_buildmic(&b, authctxt->server_user, authctxt->service,
+                            "gssapi-keyex");
+#ifdef GSI
+	}
+#endif
+
+	gssbuf.value = buffer_ptr(&b);
+	gssbuf.length = buffer_len(&b);
+
+	if (GSS_ERROR(ssh_gssapi_sign(gss_kex_context, &gssbuf, &mic))) {
+		buffer_free(&b);
+		return (0);
+	}
+
+	packet_start(SSH2_MSG_USERAUTH_REQUEST);
+#ifdef GSI
+    if (options.implicit && is_gsi_oid(gss_kex_context->oid)) {
+        packet_put_cstring("");
+	} else {
+#endif
+	packet_put_cstring(authctxt->server_user);
+#ifdef GSI
+	}
+#endif
+	packet_put_cstring(authctxt->service);
+	packet_put_cstring(authctxt->method->name);
+	packet_put_string(mic.value, mic.length);
+	packet_send();
+
+	buffer_free(&b);
+	gss_release_buffer(&ms, &mic);
+
+	return (1);
+}
+
 #endif /* GSSAPI */
 
 int
@@ -1315,6 +1505,26 @@ pubkey_cleanup(Authctxt *authctxt)
 	}
 }
 
+static int
+try_identity(Identity *id)
+{
+	if (!id->key)
+		return (0);
+	if (match_pattern_list(sshkey_ssh_name(id->key),
+	    options.pubkey_key_types, 0) != 1) {
+		debug("Skipping %s key %s for not in PubkeyAcceptedKeyTypes",
+		    sshkey_ssh_name(id->key), id->filename);
+		return (0);
+	}
+	if (key_type_plain(id->key->type) == KEY_RSA &&
+	    (datafellows & SSH_BUG_RSASIGMD5) != 0) {
+		debug("Skipped %s key %s for RSA/MD5 server",
+		    key_type(id->key), id->filename);
+		return (0);
+	}
+	return (id->key->type != KEY_RSA1);
+}
+
 int
 userauth_pubkey(Authctxt *authctxt)
 {
@@ -1333,11 +1543,7 @@ userauth_pubkey(Authctxt *authctxt)
 		 * private key instead
 		 */
 		if (id->key != NULL) {
-			if (key_type_plain(id->key->type) == KEY_RSA &&
-			    (datafellows & SSH_BUG_RSASIGMD5) != 0) {
-				debug("Skipped %s key %s for RSA/MD5 server",
-				    key_type(id->key), id->filename);
-			} else if (id->key->type != KEY_RSA1) {
+			if (try_identity(id)) {
 				debug("Offering %s public key: %s",
 				    key_type(id->key), id->filename);
 				sent = send_pubkey_test(authctxt, id);
@@ -1347,13 +1553,8 @@ userauth_pubkey(Authctxt *authctxt)
 			id->key = load_identity_file(id->filename,
 			    id->userprovided);
 			if (id->key != NULL) {
-				id->isprivate = 1;
-				if (key_type_plain(id->key->type) == KEY_RSA &&
-				    (datafellows & SSH_BUG_RSASIGMD5) != 0) {
-					debug("Skipped %s key %s for RSA/MD5 "
-					    "server", key_type(id->key),
-					    id->filename);
-				} else {
+				if (try_identity(id)) {
+					id->isprivate = 1;
 					sent = sign_and_send_pubkey(
 					    authctxt, id);
 				}
@@ -1610,8 +1811,7 @@ userauth_hostbased(Authctxt *authctxt)
 				continue;
 			if (match_pattern_list(
 			    sshkey_ssh_name(authctxt->sensitive->keys[i]),
-			    authctxt->active_ktype,
-			    strlen(authctxt->active_ktype), 0) != 1)
+			    authctxt->active_ktype, 0) != 1)
 				continue;
 			/* we take and free the key */
 			private = authctxt->sensitive->keys[i];

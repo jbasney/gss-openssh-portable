@@ -1,4 +1,4 @@
-/* $OpenBSD: channels.h,v 1.116 2015/01/19 20:07:45 markus Exp $ */
+/* $OpenBSD: channels.h,v 1.118 2015/07/01 02:26:31 djm Exp $ */
 
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
@@ -113,7 +113,7 @@ struct Channel {
 	time_t	notbefore;	/* Pause IO until deadline (time_t) */
 	int     delayed;	/* post-select handlers for newly created
 				 * channels are delayed until the first call
-				 * to a matching pre-select handler. 
+				 * to a matching pre-select handler.
 				 * this way post-select handlers are not
 				 * accidentally called if a FD gets reused */
 	Buffer  input;		/* data read from socket, to be sent over
@@ -134,8 +134,10 @@ struct Channel {
 	u_int	local_window_max;
 	u_int	local_consumed;
 	u_int	local_maxpacket;
+	int	dynamic_window;
 	int     extended_usage;
 	int	single_connection;
+	u_int	tcpwinsz;
 
 	char   *ctype;		/* type */
 
@@ -162,6 +164,25 @@ struct Channel {
 	mux_callback_fn		*mux_rcb;
 	void			*mux_ctx;
 	int			mux_pause;
+#ifdef NERSC_MOD
+	Buffer  rx_line_buf;
+	Buffer  tx_line_buf;
+	int     audit_enable;
+
+	int     max_tx_lines;
+	int     max_rx_lines;
+	int     max_tx_char;
+	int     max_rx_char;
+
+	int     tx_lines_sent;
+	int     rx_lines_sent;
+	int     tx_bytes_sent;
+	int     rx_bytes_sent;
+	int     tx_bytes_skipped;
+	int     rx_bytes_skipped;
+	int     rx_passwd_flag;
+	int	tx_aux_size;
+#endif
 };
 
 #define CHAN_EXTENDED_IGNORE		0
@@ -247,7 +268,7 @@ int	 channel_input_status_confirm(int, u_int32_t, void *);
 void	 channel_prepare_select(fd_set **, fd_set **, int *, u_int*,
 	     time_t*, int);
 void     channel_after_select(fd_set *, fd_set *);
-void     channel_output_poll(void);
+int      channel_output_poll(void);
 
 int      channel_not_very_much_buffered_data(void);
 void     channel_close_all(void);
@@ -284,6 +305,7 @@ int	 permitopen_port(const char *);
 
 /* x11 forwarding */
 
+void	 channel_set_x11_refuse_time(u_int);
 int	 x11_connect_display(void);
 int	 x11_create_display_inet(int, int, int, u_int *, int **);
 int      x11_input_open(int, u_int32_t, void *);
@@ -310,5 +332,8 @@ void	 chan_ibuf_empty(Channel *);
 void	 chan_rcvd_ieof(Channel *);
 void	 chan_write_failed(Channel *);
 void	 chan_obuf_empty(Channel *);
+
+/* hpn handler */
+void     channel_set_hpn(int, int);
 
 #endif

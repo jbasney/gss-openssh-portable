@@ -44,6 +44,7 @@
 #include "log.h"
 #include "atomicio.h"
 #include "misc.h"
+#include "pathnames.h"
 #include "hostfile.h"
 #include "ssherr.h"
 #include "ssh_api.h"
@@ -658,6 +659,7 @@ main(int argc, char **argv)
 	extern char *optarg;
 
 	__progname = ssh_get_progname(argv[0]);
+	init_pathnames();
 	seed_rng();
 	TAILQ_INIT(&tq);
 

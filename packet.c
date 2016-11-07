@@ -1,4 +1,4 @@
-/* $OpenBSD: packet.c,v 1.210 2015/03/24 20:10:08 markus Exp $ */
+/* $OpenBSD: packet.c,v 1.214 2015/08/20 22:32:42 deraadt Exp $ */
 /*
  * Author: Tatu Ylonen <ylo@cs.hut.fi>
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
@@ -269,7 +269,7 @@ struct ssh *
 ssh_packet_set_connection(struct ssh *ssh, int fd_in, int fd_out)
 {
 	struct session_state *state;
-	const struct sshcipher *none = cipher_by_name("none");
+	struct sshcipher *none = cipher_by_name("none");
 	int r;
 
 	if (none == NULL) {
@@ -792,7 +792,9 @@ ssh_packet_set_compress_hooks(struct ssh *ssh, void *ctx,
 void
 ssh_packet_set_encryption_key(struct ssh *ssh, const u_char *key, u_int keylen, int number)
 {
-#ifdef WITH_SSH1
+#ifndef WITH_SSH1
+	fatal("no SSH protocol 1 support");
+#else /* WITH_SSH1 */
 	struct session_state *state = ssh->state;
 	const struct sshcipher *cipher = cipher_by_number(number);
 	int r;
@@ -1270,7 +1272,7 @@ ssh_packet_read_seqnr(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 
 	DBG(debug("packet_read()"));
 
-	setp = (fd_set *)calloc(howmany(state->connection_in + 1,
+	setp = calloc(howmany(state->connection_in + 1,
 	    NFDBITS), sizeof(fd_mask));
 	if (setp == NULL)
 		return SSH_ERR_ALLOC_FAIL;
@@ -1579,6 +1581,7 @@ ssh_packet_read_poll2(struct ssh *ssh, u_char *typep, u_int32_t *seqnr_p)
 			logit("Bad packet length %u.", state->packlen);
 			if ((r = sshpkt_disconnect(ssh, "Packet corrupt")) != 0)
 				return r;
+			return SSH_ERR_CONN_CORRUPT;
 		}
 		sshbuf_reset(state->incoming_packet);
 	} else if (state->packlen == 0) {
@@ -1918,9 +1921,30 @@ sshpkt_fatal(struct ssh *ssh, const char *tag, int r)
 		logit("Connection closed by %.200s", ssh_remote_ipaddr(ssh));
 		cleanup_exit(255);
 	case SSH_ERR_CONN_TIMEOUT:
-		logit("Connection to %.200s timed out while "
-		    "waiting to write", ssh_remote_ipaddr(ssh));
+		logit("Connection to %.200s timed out", ssh_remote_ipaddr(ssh));
 		cleanup_exit(255);
+	case SSH_ERR_DISCONNECTED:
+		logit("Disconnected from %.200s",
+		    ssh_remote_ipaddr(ssh));
+		cleanup_exit(255);
+	case SSH_ERR_SYSTEM_ERROR:
+		if (errno == ECONNRESET) {
+			logit("Connection reset by %.200s",
+			    ssh_remote_ipaddr(ssh));
+			cleanup_exit(255);
+		}
+		/* FALLTHROUGH */
+	case SSH_ERR_NO_CIPHER_ALG_MATCH:
+	case SSH_ERR_NO_MAC_ALG_MATCH:
+	case SSH_ERR_NO_COMPRESS_ALG_MATCH:
+	case SSH_ERR_NO_KEX_ALG_MATCH:
+	case SSH_ERR_NO_HOSTKEY_ALG_MATCH:
+		if (ssh && ssh->kex && ssh->kex->failed_choice) {
+			fatal("Unable to negotiate with %.200s: %s. "
+			    "Their offer: %s", ssh_remote_ipaddr(ssh),
+			    ssh_err(r), ssh->kex->failed_choice);
+		}
+		/* FALLTHROUGH */
 	default:
 		fatal("%s%sConnection to %.200s: %s",
 		    tag != NULL ? tag : "", tag != NULL ? ": " : "",
@@ -2013,7 +2037,7 @@ ssh_packet_write_wait(struct ssh *ssh)
 	struct timeval start, timeout, *timeoutp = NULL;
 	struct session_state *state = ssh->state;
 
-	setp = (fd_set *)calloc(howmany(state->connection_out + 1,
+	setp = calloc(howmany(state->connection_out + 1,
 	    NFDBITS), sizeof(fd_mask));
 	if (setp == NULL)
 		return SSH_ERR_ALLOC_FAIL;
@@ -2205,6 +2229,14 @@ ssh_packet_send_ignore(struct ssh *ssh, int nbytes)
 	}
 }
 
+/* this supports the forced rekeying required for the NONE cipher */
+int rekey_requested = 0;
+void
+packet_request_rekeying(void)
+{
+	rekey_requested = 1;
+}
+
 #define MAX_PACKETS	(1U<<31)
 int
 ssh_packet_need_rekeying(struct ssh *ssh)
@@ -2213,6 +2245,10 @@ ssh_packet_need_rekeying(struct ssh *ssh)
 
 	if (ssh->compat & SSH_BUG_NOREKEY)
 		return 0;
+	if (rekey_requested == 1) {
+		rekey_requested = 0;
+		return 1;
+	}
 	return
 	    (state->p_send.packets > MAX_PACKETS) ||
 	    (state->p_read.packets > MAX_PACKETS) ||
@@ -2222,6 +2258,14 @@ ssh_packet_need_rekeying(struct ssh *ssh)
 	        (state->p_read.blocks > state->max_blocks_in)) ||
 	    (state->rekey_interval != 0 && state->rekey_time +
 		 state->rekey_interval <= monotime());
+}
+
+int
+packet_authentication_state(const struct ssh *ssh)
+{
+	struct session_state *state = ssh->state;
+
+	return state->after_authentication;
 }
 
 void
@@ -2267,7 +2311,32 @@ ssh_packet_get_output(struct ssh *ssh)
 	return (void *)ssh->state->output;
 }
 
+void *
+packet_get_receive_context(struct ssh *ssh)
+{
+    return (void*)&(ssh->state->receive_context);
+}
+
+void *
+packet_get_send_context(struct ssh *ssh)
+{
+    return (void*)&(ssh->state->send_context);
+}
+
 /* XXX TODO update roaming to new API (does not work anyway) */
+
+void *
+ssh_packet_get_receive_context(struct ssh *ssh)
+{
+	return (void *)&ssh->state->receive_context;
+}
+
+void *
+ssh_packet_get_send_context(struct ssh *ssh)
+{
+	return (void *)&ssh->state->send_context;
+}
+
 /*
  * Save the state for the real connection, and use a separate state when
  * resuming a suspended connection.
@@ -2733,13 +2802,14 @@ sshpkt_put_stringb(struct ssh *ssh, const struct sshbuf *v)
 	return sshbuf_put_stringb(ssh->state->outgoing_packet, v);
 }
 
-#if defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC)
+#ifdef WITH_OPENSSL
+#ifdef OPENSSL_HAS_ECC
 int
 sshpkt_put_ec(struct ssh *ssh, const EC_POINT *v, const EC_GROUP *g)
 {
 	return sshbuf_put_ec(ssh->state->outgoing_packet, v, g);
 }
-#endif /* WITH_OPENSSL && OPENSSL_HAS_ECC */
+#endif /* OPENSSL_HAS_ECC */
 
 #ifdef WITH_SSH1
 int
@@ -2749,7 +2819,6 @@ sshpkt_put_bignum1(struct ssh *ssh, const BIGNUM *v)
 }
 #endif /* WITH_SSH1 */
 
-#ifdef WITH_OPENSSL
 int
 sshpkt_put_bignum2(struct ssh *ssh, const BIGNUM *v)
 {
@@ -2801,13 +2870,14 @@ sshpkt_get_cstring(struct ssh *ssh, char **valp, size_t *lenp)
 	return sshbuf_get_cstring(ssh->state->incoming_packet, valp, lenp);
 }
 
-#if defined(WITH_OPENSSL) && defined(OPENSSL_HAS_ECC)
+#ifdef WITH_OPENSSL
+#ifdef OPENSSL_HAS_ECC
 int
 sshpkt_get_ec(struct ssh *ssh, EC_POINT *v, const EC_GROUP *g)
 {
 	return sshbuf_get_ec(ssh->state->incoming_packet, v, g);
 }
-#endif /* WITH_OPENSSL && OPENSSL_HAS_ECC */
+#endif /* OPENSSL_HAS_ECC */
 
 #ifdef WITH_SSH1
 int
@@ -2817,7 +2887,6 @@ sshpkt_get_bignum1(struct ssh *ssh, BIGNUM *v)
 }
 #endif /* WITH_SSH1 */
 
-#ifdef WITH_OPENSSL
 int
 sshpkt_get_bignum2(struct ssh *ssh, BIGNUM *v)
 {

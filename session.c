@@ -1,4 +1,4 @@
-/* $OpenBSD: session.c,v 1.277 2015/01/16 06:40:12 deraadt Exp $ */
+/* $OpenBSD: session.c,v 1.278 2015/04/24 01:36:00 deraadt Exp $ */
 /*
  * Copyright (c) 1995 Tatu Ylonen <ylo@cs.hut.fi>, Espoo, Finland
  *                    All rights reserved
@@ -95,6 +95,12 @@
 #include "monitor_wrap.h"
 #include "sftp.h"
 
+#ifdef NERSC_MOD
+#include "nersc.h"
+#include <ctype.h>
+extern int client_session_id;
+#endif
+
 #if defined(KRB5) && defined(USE_AFS)
 #include <kafs.h>
 #endif
@@ -131,6 +137,11 @@ static void do_authenticated1(Authctxt *);
 static void do_authenticated2(Authctxt *);
 
 static int session_pty_req(Session *);
+
+#ifdef SESSION_HOOKS
+static void execute_session_hook(char* prog, Authctxt *authctxt,
+                                 int startup, int save);
+#endif
 
 /* import */
 extern ServerOptions options;
@@ -220,6 +231,7 @@ auth_input_request_forwarding(struct passwd * pw)
 		goto authsock_err;
 
 	/* Allocate a channel for the authentication agent socket. */
+	/* this shouldn't matter if its hpn or not - cjr */
 	nc = channel_new("auth socket",
 	    SSH_CHANNEL_AUTH_SOCKET, sock, sock, -1,
 	    CHAN_X11_WINDOW_DEFAULT, CHAN_X11_PACKET_DEFAULT,
@@ -270,6 +282,21 @@ do_authenticated(Authctxt *authctxt)
 	else
 		do_authenticated1(authctxt);
 
+#ifdef SESSION_HOOKS
+        if (options.session_hooks_allow &&
+            options.session_hooks_shutdown_cmd)
+        {
+            execute_session_hook(options.session_hooks_shutdown_cmd,
+                                 authctxt,
+                                 /* startup = */ 0, /* save = */ 0);
+
+            if (authctxt->session_env_file)
+            {
+                free(authctxt->session_env_file);
+            }
+        }
+#endif
+
 	do_cleanup(authctxt);
 }
 
@@ -309,15 +336,24 @@ do_authenticated1(Authctxt *authctxt)
 		/* Process the packet. */
 		switch (type) {
 		case SSH_CMSG_REQUEST_COMPRESSION:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
 			compression_level = packet_get_int();
 			packet_check_eom();
 			if (compression_level < 1 || compression_level > 9) {
 				packet_send_debug("Received invalid compression level %d.",
 				    compression_level);
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				break;
 			}
 			if (options.compression == COMP_NONE) {
 				debug2("compression disabled");
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				break;
 			}
 			/* Enable compression after we have responded with SUCCESS. */
@@ -326,10 +362,20 @@ do_authenticated1(Authctxt *authctxt)
 			break;
 
 		case SSH_CMSG_REQUEST_PTY:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
+
 			success = session_pty_req(s);
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, success);
+#endif
 			break;
 
 		case SSH_CMSG_X11_REQUEST_FORWARDING:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
 			s->auth_proto = packet_get_string(&proto_len);
 			s->auth_data = packet_get_string(&data_len);
 
@@ -356,51 +402,103 @@ do_authenticated1(Authctxt *authctxt)
 			break;
 
 		case SSH_CMSG_AGENT_REQUEST_FORWARDING:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
 			if (!options.allow_agent_forwarding ||
 			    no_agent_forwarding_flag || compat13) {
 				debug("Authentication agent forwarding not permitted for this authentication.");
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				break;
 			}
 			debug("Received authentication agent forwarding request.");
 			success = auth_input_request_forwarding(s->pw);
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, success);
+#endif
 			break;
 
 		case SSH_CMSG_PORT_FORWARD_REQUEST:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
 			if (no_port_forwarding_flag) {
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				debug("Port forwarding not permitted for this authentication.");
 				break;
 			}
 			if (!(options.allow_tcp_forwarding & FORWARD_REMOTE)) {
 				debug("Port forwarding not permitted.");
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				break;
 			}
 			debug("Received TCP/IP port forwarding request.");
 			if (channel_input_port_forward_request(s->pw->pw_uid == 0,
 			    &options.fwd_opts) < 0) {
 				debug("Port forwarding failed.");
+#ifdef NERSC_MOD
+				s_audit("session_do_auth_3", "count=%i count=%i", type, 0);
+#endif
 				break;
 			}
 			success = 1;
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 1);
+#endif
 			break;
 
 		case SSH_CMSG_MAX_PACKET_SIZE:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+#endif
 			if (packet_set_maxsize(packet_get_int()) > 0)
 				success = 1;
+#ifdef NERSC_MOD
+			int t_success = 0;
+			if ( success == 1 ) t_success = 1;
+			s_audit("session_do_auth_3", "count=%i count=%i", type, t_success);
+#endif
 			break;
 
 		case SSH_CMSG_EXEC_SHELL:
 		case SSH_CMSG_EXEC_CMD:
+#ifdef NERSC_MOD
+			s_audit("session_do_auth_3", "count=%i count=%i", type, 2);
+			int t_success2 = 1;
+#endif
 			if (type == SSH_CMSG_EXEC_CMD) {
 				command = packet_get_string(&dlen);
 				debug("Exec command '%.500s'", command);
 				if (do_exec(s, command) != 0)
+#ifdef NERSC_MOD
+					{
+					t_success2 = 0;
+					packet_disconnect("command execution failed");
+					}
+#else
 					packet_disconnect(
 					    "command execution failed");
+#endif
+
 				free(command);
 			} else {
 				if (do_exec(s, NULL) != 0)
+#ifdef NERSC_MOD
+					{
+					t_success2 = 0;
+					packet_disconnect("command execution failed");
+					}
+#else
 					packet_disconnect(
 					    "shell execution failed");
+#endif
+
 			}
 			packet_check_eom();
 			session_close(s);
@@ -479,6 +577,16 @@ do_exec_no_pty(Session *s, const char *command)
 		close(inout[0]);
 		close(inout[1]);
 		return -1;
+	}
+#endif
+
+#ifdef NERSC_MOD
+	if ( command != NULL ) 	{
+
+		char* t1buf = encode_string(command, strlen(command));
+		s_audit("session_remote_exec_no_pty_3", "count=%i count=%i count=%ld uristring=%s", 
+			client_session_id, s->chanid, (long)getppid(), t1buf);
+		free(t1buf);
 	}
 #endif
 
@@ -637,6 +745,15 @@ do_exec_pty(Session *s, const char *command)
 	ptyfd = s->ptyfd;
 	ttyfd = s->ttyfd;
 
+#ifdef NERSC_MOD
+	if ( command != NULL ) 	{
+
+		char* t1buf = encode_string(command, strlen(command));
+		s_audit("session_remote_exec_pty_3", "count=%i count=%i count=%ld uristring=%s", 
+			client_session_id, s->chanid, (long)getppid(), t1buf);
+		free(t1buf);
+	}
+#endif
 	/*
 	 * Create another descriptor of the pty master side for use as the
 	 * standard input.  We could use the original descriptor, but this
@@ -781,6 +898,19 @@ do_exec(Session *s, const char *command)
 	const char *forced = NULL;
 	char session_type[1024], *tty = NULL;
 
+#ifdef NERSC_MOD
+	/* since the channel client/server code now takes the raw string
+	 *  data, we remove the 'clean_command' functionality 
+	 */
+	if ( command != NULL ) 	{
+
+		char* t1buf = encode_string(command, strlen(command));
+		s_audit("session_remote_do_exec_3", "count=%i count=%i count=%ld uristring=%s", 
+			client_session_id, s->chanid, (long)getppid(), t1buf);
+		free(t1buf);
+	}
+#endif
+
 	if (options.adm_forced_command) {
 		original_command = command;
 		command = options.adm_forced_command;
@@ -813,6 +943,26 @@ do_exec(Session *s, const char *command)
 		if (strncmp(tty, "/dev/", 5) == 0)
 			tty += 5;
 	}
+
+#if defined(SESSION_HOOKS)
+	if (options.session_hooks_allow &&
+	    (options.session_hooks_startup_cmd ||
+	     options.session_hooks_shutdown_cmd))
+	{
+		char env_file[1000];
+		struct stat st;
+		do
+		{
+			snprintf(env_file,
+				 sizeof(env_file),
+				 "/tmp/ssh_env_%d%d%d",
+				 getuid(),
+				 getpid(),
+				 rand());
+		} while (stat(env_file, &st)==0);
+		s->authctxt->session_env_file = strdup(env_file);
+	}
+#endif
 
 	verbose("Starting session: %s%s%s for %s from %.200s port %d",
 	    session_type,
@@ -997,7 +1147,7 @@ child_set_env(char ***envp, u_int *envsizep, const char *name,
 			if (envsize >= 1000)
 				fatal("child_set_env: too many env vars");
 			envsize += 50;
-			env = (*envp) = xrealloc(env, envsize, sizeof(char *));
+			env = (*envp) = xreallocarray(env, envsize, sizeof(char *));
 			*envsizep = envsize;
 		}
 		/* Need to set the NULL pointer at end of array beyond the new slot. */
@@ -1054,6 +1204,117 @@ read_environment_file(char ***env, u_int *envsize,
 	}
 	fclose(f);
 }
+
+#ifdef SESSION_HOOKS
+#define SSH_SESSION_ENV_FILE "SSH_SESSION_ENV_FILE"
+
+typedef enum { no_op, execute, clear_env, restore_env,
+               read_env, save_or_rm_env } session_action_t;
+
+static session_action_t action_order[2][5] = {
+    { clear_env, read_env, execute, save_or_rm_env, restore_env }, /*shutdown*/
+    { execute, read_env, save_or_rm_env, no_op, no_op }            /*startup */
+};
+
+static
+void execute_session_hook(char* prog, Authctxt *authctxt,
+                          int startup, int save)
+{
+    extern char **environ;
+
+    struct stat  st;
+    char         **saved_env, **tmpenv;
+    char         *env_file = authctxt->session_env_file;
+    int          i, status = 0;
+
+    for (i=0; i<5; i++)
+    {
+        switch (action_order[startup][i])
+        {
+          case no_op:
+            break;
+
+          case execute:
+            {
+                FILE* fp;
+                char  buf[1000];
+
+                snprintf(buf,
+                         sizeof(buf),
+                         "%s -c '%s'",
+                         authctxt->pw->pw_shell,
+                         prog);
+
+                debug("executing session hook: [%s]", buf);
+                setenv(SSH_SESSION_ENV_FILE, env_file, /* overwrite = */ 1);
+
+                /* flusing is recommended in the popen(3) man page, to avoid
+                   intermingling of output */
+                fflush(stdout);
+                fflush(stderr);
+                if ((fp=popen(buf, "w")) == NULL)
+                {
+                    perror("Unable to run session hook");
+                    return;
+                }
+                status = pclose(fp);
+                debug2("session hook executed, status=%d", status);
+                unsetenv(SSH_SESSION_ENV_FILE);
+            }
+            break;
+
+          case clear_env:
+            saved_env = environ;
+            tmpenv = (char**) malloc(sizeof(char*));
+            tmpenv[0] = NULL;
+            environ = tmpenv;
+            break;
+
+          case restore_env:
+            environ = saved_env;
+            free(tmpenv);
+            break;
+
+          case read_env:
+            if (status==0 && stat(env_file, &st)==0)
+            {
+                int envsize = 0;
+
+                debug("reading environment from %s", env_file);
+                while (environ[envsize++]) ;
+                read_environment_file(&environ, &envsize, env_file);
+            }
+            break;
+
+          case save_or_rm_env:
+            if (status==0 && save)
+            {
+                FILE* fp;
+                int    envcount=0;
+
+                debug2("saving environment to %s", env_file);
+                if ((fp = fopen(env_file, "w")) == NULL) /* hmm: file perms? */
+                {
+                    perror("Unable to save session hook info");
+                }
+                while (environ[envcount])
+                {
+                    fprintf(fp, "%s\n", environ[envcount++]);
+                }
+                fflush(fp);
+                fclose(fp);
+            }
+            else if (stat(env_file, &st)==0)
+            {
+                debug2("removing environment file %s", env_file);
+                remove(env_file);
+            }
+            break;
+        }
+    }
+
+}
+#endif
 
 #ifdef HAVE_ETC_DEFAULT_LOGIN
 /*
@@ -1185,7 +1446,8 @@ do_setup_env(Session *s, const char *shell)
 		child_set_env(&env, &envsize, "HOME", pw->pw_dir);
 #ifdef HAVE_LOGIN_CAP
 		if (setusercontext(lc, pw, pw->pw_uid, LOGIN_SETPATH) < 0)
-			child_set_env(&env, &envsize, "PATH", _PATH_STDPATH);
+			child_set_env(&env, &envsize, "PATH",
+				      _PATH_STDPATH_WITH_SCP);
 		else
 			child_set_env(&env, &envsize, "PATH", getenv("PATH"));
 #else /* HAVE_LOGIN_CAP */
@@ -1203,7 +1465,7 @@ do_setup_env(Session *s, const char *shell)
 		if (path == NULL || *path == '\0') {
 			child_set_env(&env, &envsize, "PATH",
 			    s->pw->pw_uid == 0 ?
-				SUPERUSER_PATH : _PATH_STDPATH);
+				SUPERUSER_PATH : _PATH_STDPATH_WITH_SCP);
 		}
 # endif /* HAVE_CYGWIN */
 #endif /* HAVE_LOGIN_CAP */
@@ -1217,6 +1479,25 @@ do_setup_env(Session *s, const char *shell)
 	}
 	if (getenv("TZ"))
 		child_set_env(&env, &envsize, "TZ", getenv("TZ"));
+
+#ifdef GSI /* GSI shared libs typically installed in non-system locations. */
+	{
+		char *cp;
+
+		if ((cp = getenv("LD_LIBRARY_PATH")) != NULL)
+			child_set_env(&env, &envsize, "LD_LIBRARY_PATH", cp);
+		if ((cp = getenv("LIBPATH")) != NULL)
+			child_set_env(&env, &envsize, "LIBPATH", cp);
+		if ((cp = getenv("SHLIB_PATH")) != NULL)
+			child_set_env(&env, &envsize, "SHLIB_PATH", cp);
+		if ((cp = getenv("LD_LIBRARYN32_PATH")) != NULL)
+			child_set_env(&env, &envsize, "LD_LIBRARYN32_PATH",cp);
+		if ((cp = getenv("LD_LIBRARY64_PATH")) != NULL)
+			child_set_env(&env, &envsize, "LD_LIBRARY64_PATH",cp);
+		if ((cp = getenv("GLOBUS_LOCATION")) != NULL)
+			child_set_env(&env, &envsize, "GLOBUS_LOCATION",cp);
+	}
+#endif
 
 	/* Set custom environment options from RSA authentication. */
 	if (!options.use_login) {
@@ -1358,10 +1639,11 @@ do_rc_files(Session *s, const char *shell)
 			fprintf(stderr, "Could not run %s\n",
 			    _PATH_SSH_USER_RC);
 	} else if (stat(_PATH_SSH_SYSTEM_RC, &st) >= 0) {
+		snprintf(cmd, sizeof cmd, "%s %s", _PATH_BSHELL,
+			 _PATH_SSH_SYSTEM_RC);
 		if (debug_flag)
-			fprintf(stderr, "Running %s %s\n", _PATH_BSHELL,
-			    _PATH_SSH_SYSTEM_RC);
-		f = popen(_PATH_BSHELL " " _PATH_SSH_SYSTEM_RC, "w");
+			fprintf(stderr, "Running %s\n", cmd);
+		f = popen(cmd, "w");
 		if (f) {
 			if (do_xauth)
 				fprintf(f, "%s %s\n", s->auth_proto,
@@ -1672,6 +1954,18 @@ do_child(Session *s, const char *command)
 	struct passwd *pw = s->pw;
 	int r = 0;
 
+#ifdef AFS_KRB5
+/* Default place to look for aklog. */
+#ifdef AKLOG_PATH
+#define KPROGDIR AKLOG_PATH
+#else
+#define KPROGDIR "/usr/bin/aklog"
+#endif /* AKLOG_PATH */
+
+	struct stat st;
+	char *aklog_path;
+#endif /* AFS_KRB5 */
+
 	/* remove hostkey from the child's memory */
 	destroy_sensitive_data();
 
@@ -1784,6 +2078,41 @@ do_child(Session *s, const char *command)
 	}
 #endif
 
+#ifdef AFS_KRB5
+
+	/* User has authenticated, and if a ticket was going to be
+	 * passed we would have it.  KRB5CCNAME should already be set.
+	 * Now try to get an AFS token using aklog.
+	 */
+	if (k_hasafs()) {  /* Do we have AFS? */
+
+		aklog_path = xstrdup(KPROGDIR);
+
+		/*
+		 * Make sure it exists before we try to run it
+		 */
+		if (stat(aklog_path, &st) == 0) {
+			debug("Running %s to get afs token.",aklog_path);
+			system(aklog_path);
+		} else {
+			debug("%s does not exist.",aklog_path);
+		}
+
+		free(aklog_path);
+	}
+#endif /* AFS_KRB5 */
+
+#ifdef SESSION_HOOKS
+        if (options.session_hooks_allow &&
+            options.session_hooks_startup_cmd)
+        {
+            execute_session_hook(options.session_hooks_startup_cmd,
+                                 s->authctxt,
+                                 /* startup = */ 1,
+                                 options.session_hooks_shutdown_cmd != NULL);
+        }
+#endif
+
 	/* Change current directory to the user's home directory. */
 	if (chdir(pw->pw_dir) < 0) {
 		/* Suppress missing homedir warning for chroot case */
@@ -1864,7 +2193,7 @@ do_child(Session *s, const char *command)
 		/* Execute the shell. */
 		argv[0] = argv0;
 		argv[1] = NULL;
-		execve(shell, argv, env);
+		execve(shell, argv, environ);
 
 		/* Executing the shell failed. */
 		perror(shell);
@@ -1878,7 +2207,7 @@ do_child(Session *s, const char *command)
 	argv[1] = "-c";
 	argv[2] = (char *) command;
 	argv[3] = NULL;
-	execve(shell, argv, env);
+	execve(shell, argv, environ);
 	perror(shell);
 	exit(1);
 }
@@ -1914,7 +2243,7 @@ session_new(void)
 			return NULL;
 		debug2("%s: allocate (allocated %d max %d)",
 		    __func__, sessions_nalloc, options.max_sessions);
-		tmp = xrealloc(sessions, sessions_nalloc + 1,
+		tmp = xreallocarray(sessions, sessions_nalloc + 1,
 		    sizeof(*sessions));
 		if (tmp == NULL) {
 			error("%s: cannot allocate %d sessions",
@@ -2241,7 +2570,7 @@ session_env_req(Session *s)
 	for (i = 0; i < options.num_accept_env; i++) {
 		if (match_pattern(name, options.accept_env[i])) {
 			debug2("Setting env %d: %s=%s", s->num_env, name, val);
-			s->env = xrealloc(s->env, s->num_env + 1,
+			s->env = xreallocarray(s->env, s->num_env + 1,
 			    sizeof(*s->env));
 			s->env[s->num_env].name = name;
 			s->env[s->num_env].val = val;
@@ -2308,6 +2637,17 @@ session_input_channel_req(Channel *c, const char *rtype)
 			success = session_env_req(s);
 		}
 	}
+
+#ifdef NERSC_MOD
+	if ((strcmp(rtype,"window-change") != 0) && (strcmp(rtype,"env") != 0)) {
+
+		char* t1buf = encode_string(rtype, strlen(rtype));
+		s_audit("session_channel_request_3", "count=%i int=%d count=%d uristring=%s", 
+			client_session_id, getpid(), c->self, t1buf);
+		free(t1buf);
+	}
+#endif
+
 	if (strcmp(rtype, "window-change") == 0) {
 		success = session_window_change_req(s);
 	} else if (strcmp(rtype, "break") == 0) {
@@ -2329,10 +2669,16 @@ session_set_fds(Session *s, int fdin, int fdout, int fderr, int ignore_fderr,
 	 */
 	if (s->chanid == -1)
 		fatal("no channel for session %d", s->self);
+	if (options.hpn_disabled)
 	channel_set_fds(s->chanid,
 	    fdout, fdin, fderr,
 	    ignore_fderr ? CHAN_EXTENDED_IGNORE : CHAN_EXTENDED_READ,
 	    1, is_tty, CHAN_SES_WINDOW_DEFAULT);
+	else
+		channel_set_fds(s->chanid,
+		    fdout, fdin, fderr,
+		    ignore_fderr ? CHAN_EXTENDED_IGNORE : CHAN_EXTENDED_READ,
+		    1, is_tty, options.hpn_buffer_size);
 }
 
 /*
@@ -2480,6 +2826,10 @@ session_exit_message(Session *s, int status)
 
 	/* disconnect channel */
 	debug("session_exit_message: release channel %d", s->chanid);
+
+#ifdef NERSC_MOD
+	s_audit("session_exit_3", "count=%i count=%d count=%ld count=%d", client_session_id, s->chanid, (long)getppid(), status);
+#endif
 
 	/*
 	 * Adjust cleanup callback attachment to send close messages when
@@ -2689,6 +3039,14 @@ session_setup_x11fwd(Session *s)
 		    s->display_number, s->screen);
 		s->display = xstrdup(display);
 		s->auth_display = xstrdup(auth_display);
+
+#ifdef NERSC_MOD
+		char* t1buf = encode_string(display, strlen(display));
+		s_audit("session_x11fwd_3", "count=%i count=%i uristring=%s", 
+			client_session_id, s->chanid, t1buf);
+		free(t1buf);
+#endif
+
 	} else {
 #ifdef IPADDR_IN_DISPLAY
 		struct hostent *he;

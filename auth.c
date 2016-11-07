@@ -1,4 +1,4 @@
-/* $OpenBSD: auth.c,v 1.110 2015/02/25 17:29:38 djm Exp $ */
+/* $OpenBSD: auth.c,v 1.113 2015/08/21 03:42:19 djm Exp $ */
 /*
  * Copyright (c) 2000 Markus Friedl.  All rights reserved.
  *
@@ -75,11 +75,22 @@
 #include "ssherr.h"
 #include "compat.h"
 
+#include "version.h"
+#include "ssh-globus-usage.h"
+
 /* import */
 extern ServerOptions options;
 extern int use_privsep;
 extern Buffer loginmsg;
 extern struct passwd *privsep_pw;
+
+#ifdef NERSC_MOD
+#include "nersc.h"
+#include <unistd.h>
+extern int client_session_id;
+extern char n_ntop[NI_MAXHOST];
+extern char n_port[NI_MAXHOST];
+#endif
 
 /* Debugging messages */
 Buffer auth_debug;
@@ -299,7 +310,8 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 	    method,
 	    submethod != NULL ? "/" : "", submethod == NULL ? "" : submethod,
 	    authctxt->valid ? "" : "invalid user ",
-	    authctxt->user,
+	    (authctxt->user && authctxt->user[0]) ?
+		authctxt->user : "unknown",
 	    get_remote_ipaddr(),
 	    get_remote_port(),
 	    compat20 ? "ssh2" : "ssh1",
@@ -307,6 +319,19 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 	    authctxt->info != NULL ? authctxt->info : "");
 	free(authctxt->info);
 	authctxt->info = NULL;
+
+#ifdef NERSC_MOD
+	char* t1buf = encode_string(authctxt->user, strlen(authctxt->user) );
+	char* t2buf = encode_string(method, strlen(method) );
+	char* t3buf = encode_string(authmsg, strlen(authmsg) );
+
+	s_audit("auth_info_3", "count=%i uristring=%s uristring=%s uristring=%s addr=%.200s  port=%d/tcp addr=%s port=%s/tcp",
+		client_session_id, t3buf, t1buf, t2buf, get_remote_ipaddr(), get_remote_port(), n_ntop, 
+		n_port);
+	free(t1buf);
+	free(t2buf);
+	free(t3buf);
+#endif
 
 #ifdef CUSTOM_FAILED_LOGIN
 	if (authenticated == 0 && !authctxt->postponed &&
@@ -325,6 +350,23 @@ auth_log(Authctxt *authctxt, int authenticated, int partial,
 	if (authenticated == 0 && !authctxt->postponed)
 		audit_event(audit_classify_auth(method));
 #endif
+	if (authenticated) {
+		char *userdn = NULL;
+		char *mech_name = NULL;
+#ifdef GSSAPI
+		ssh_gssapi_get_client_info(&userdn, &mech_name);
+#endif
+		debug("REPORTING (%s) (%s) (%s) (%s) (%s) (%s) (%s)",
+			 SSH_RELEASE, SSLeay_version(SSLEAY_VERSION),
+			 method, mech_name?mech_name:"NULL", get_remote_ipaddr(),
+			 (authctxt->user && authctxt->user[0])?
+				authctxt->user : "unknown",
+			userdn?userdn:"NULL");
+		ssh_globus_send_usage_metrics(SSH_RELEASE,
+					SSLeay_version(SSLEAY_VERSION),
+					method, mech_name, get_remote_ipaddr(),
+					authctxt->user, userdn);
+	}
 }
 
 
@@ -352,7 +394,10 @@ auth_root_allowed(const char *method)
 	case PERMIT_YES:
 		return 1;
 	case PERMIT_NO_PASSWD:
-		if (strcmp(method, "password") != 0)
+		if (strcmp(method, "publickey") == 0 ||
+		    strcmp(method, "hostbased") == 0 ||
+		    strcmp(method, "gssapi-keyex") == 0 ||
+		    strcmp(method, "gssapi-with-mic") == 0)
 			return 1;
 		break;
 	case PERMIT_FORCED_ONLY:
@@ -400,8 +445,7 @@ expand_authorized_keys(const char *filename, struct passwd *pw)
 char *
 authorized_principals_file(struct passwd *pw)
 {
-	if (options.authorized_principals_file == NULL ||
-	    strcasecmp(options.authorized_principals_file, "none") == 0)
+	if (options.authorized_principals_file == NULL)
 		return NULL;
 	return expand_authorized_keys(options.authorized_principals_file, pw);
 }
@@ -620,6 +664,10 @@ getpwnamallow(const char *user)
 #endif
 
 	pw = getpwnam(user);
+#ifdef USE_PAM
+	if (options.use_pam && options.permit_pam_user_change && pw == NULL)
+		pw = sshpam_getpw(user);
+#endif
 
 #if defined(_AIX) && defined(HAVE_SETAUTHDB)
 	aix_restoreauthdb();
@@ -639,11 +687,19 @@ getpwnamallow(const char *user)
 #endif
 	if (pw == NULL) {
 		logit("Invalid user %.100s from %.100s",
-		    user, get_remote_ipaddr());
+		      (user && user[0]) ? user : "unknown",
+		      get_remote_ipaddr());
 #ifdef CUSTOM_FAILED_LOGIN
 		record_failed_login(user,
 		    get_canonical_hostname(options.use_dns), "ssh");
 #endif
+
+#ifdef NERSC_MOD
+	char* t1buf = encode_string(user, strlen(user));
+	s_audit("auth_invalid_user_3", "count=%i uristring=%s", client_session_id, t1buf);
+	free(t1buf);
+#endif
+
 #ifdef SSH_AUDIT_EVENTS
 		audit_event(SSH_INVALID_USER);
 #endif /* SSH_AUDIT_EVENTS */
