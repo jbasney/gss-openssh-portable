@@ -1,3 +1,10 @@
 language: c
 sudo: required
-before_install: autoreconf
+before_install:
+  - curl http://www.globus.org/ftppub/gt6/installers/repo/globus-toolkit-repo_latest_all.deb | sudo dpkg -i
+  - sudo apt-get update -qq
+  - sudo apt-get install -qq globus-gsi
+install:
+  - autoreconf
+  - ./configure --with-globus-flavor=gcc64dbg
+  - make
