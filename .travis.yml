@@ -6,7 +6,7 @@ before_install:
   - sudo apt-get install -qq globus-gsi
 install:
   - autoreconf
-  - ./configure --with-globus-flavor=gcc64dbg
+  - ./configure --with-globus
   - make
 after_success:
   - ./gsissh -V
