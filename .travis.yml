@@ -3,7 +3,7 @@ before_install:
   - wget http://www.globus.org/ftppub/gt6/installers/repo/globus-toolkit-repo_latest_all.deb
   - sudo dpkg -i globus-toolkit-repo_latest_all.deb
   - sudo apt-get update -qq
-  - sudo apt-get install -qq libglobus-common-dev, libglobus-gss-assist-dev, libglobus-gssapi-gsi-dev, libglobus-usage-dev
+  - sudo apt-get install -qq globus-data-management-sdk
   - pkg-config --exists --print-errors "globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl"
   - pkg-config --libs "globus-gss-assist >= 2, globus-gssapi-gsi, globus-usage >= 1, globus-common, openssl"
 install:
