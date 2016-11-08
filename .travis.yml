@@ -11,4 +11,4 @@ script:
   - ./configure --with-globus
   - make
 after_success:
-  - ./gsissh -V
+  - ./ssh -V
