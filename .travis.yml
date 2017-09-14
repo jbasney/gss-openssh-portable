@@ -1,5 +1,6 @@
 language: c
 sudo: required
+dist: trusty
 install:
   - wget http://www.globus.org/ftppub/gt6/installers/repo/globus-toolkit-repo_latest_all.deb
   - sudo dpkg -i globus-toolkit-repo_latest_all.deb
